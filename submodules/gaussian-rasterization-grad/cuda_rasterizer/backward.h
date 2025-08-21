@@ -8,6 +8,7 @@
  *
  * For inquiries contact  george.drettakis@inria.fr
  */
+ // Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 
 #ifndef CUDA_RASTERIZER_BACKWARD_H_INCLUDED
 #define CUDA_RASTERIZER_BACKWARD_H_INCLUDED
