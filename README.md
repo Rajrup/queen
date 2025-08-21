@@ -312,7 +312,7 @@ girish2024queen,
   author={Sharath Girish and Tianye Li and Amrita Mazumdar and Abhinav Shrivastava and David Luebke and Shalini De Mello},
   booktitle={The Thirty-eighth Annual Conference on Neural Information Processing Systems},
   year={2024},
-  url={https://openreview.net/forum?id=7xhwE7VH4S}
+  url={https://research.nvidia.com/labs/amri/projects/queen/}
 }
 ```
 
