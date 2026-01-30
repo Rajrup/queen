@@ -80,38 +80,57 @@ Please use the [Dockerfile](Dockerfile) for training within a working container.
 #### Conda Environment
 
 ```bash
-# create the conda environment
-conda env create -f environment.yml
+# Create the conda environment
+conda create -n queen python=3.11
 conda activate queen
 
-# install submodules
-pip install ./submodules/simple-knn
-pip install ./submodules/diff-gaussian-rasterization
-pip install ./submodules/gaussian-rasterization-grad
+# Install the package and its dependencies
+pip install -e .
 
-# manually correct bug in timm package
-# as in https://github.com/huggingface/pytorch-image-models/issues/1530#issuecomment-2084575852 
-cp ./maxxvit.py /root/miniconda3/lib/python3.11/site-packages/timm/models/maxxvit.py
+# Install CUDA-dependent submodules (must be installed with --no-build-isolation)
+pip install --no-build-isolation ./submodules/simple-knn
+pip install --no-build-isolation ./submodules/diff-gaussian-rasterization
+pip install --no-build-isolation ./submodules/gaussian-rasterization-grad
+
+# Apply timm package patch (required for compatibility)
+python scripts/patch_timm.py
 ```
 
-#### Manually patch `maxxvit.py` in `timm`
 
-This repo uses an older version of timm which requires a patched version of `maxxvit.py`, following [this issue](https://github.com/huggingface/pytorch-image-models/issues/1530#issuecomment-2084575852).
+<details>
+<summary><span style="font-weight: bold;">Alternative: Manual Installation</span></summary>
 
-We include this patched file in the repo (`maxxvit.py`). You’ll need to overwrite the existing file in your environment’s `timm` installation. This step is already included in the Dockerfile and Conda install instructions, but explained in further detail here. 
+If you prefer to install dependencies manually without using `setup.py`:
 
-Python version and Conda environment paths can vary, so you must locate the correct destination and copy the file to that location:
+```bash
+# Create and activate conda environment
+conda create -n queen python=3.11
+conda activate queen
 
+# Install dependencies from requirements.txt
+pip install -r requirements.txt
+
+# Install CUDA-dependent submodules
+pip install --no-build-isolation ./submodules/simple-knn
+pip install --no-build-isolation ./submodules/diff-gaussian-rasterization
+pip install --no-build-isolation ./submodules/gaussian-rasterization-grad
+
+# Apply timm package patch
+python scripts/patch_timm.py
 ```
-python -c "import timm; print(timm.__file__)"
-cp maxxvit.py /path/to/timm/models/maxxvit.py
-```
 
-For example, if you’re using Python 3.12 in a Conda env named `queen`:
+</details>
 
-```
-cp maxxvit.py ~/miniconda3/envs/queen/lib/python3.12/site-packages/timm/models/maxxvit.py
-```
+#### About the `timm` Package Patch
+
+This repository uses `timm==0.6.13` which requires a patched version of `maxxvit.py` to fix a compatibility issue. See [this GitHub issue](https://github.com/huggingface/pytorch-image-models/issues/1530#issuecomment-2084575852) for details.
+
+The patched file is included in this repository (`maxxvit.py`), and the `scripts/patch_timm.py` script automatically:
+- Locates your `timm` installation
+- Creates a backup of the original file (`.py.backup`)
+- Copies the patched version to the correct location
+
+This patching step is already included in both the Dockerfile and the Conda installation instructions above.
 
 ### 3. Download weights for MiDaS
 
