@@ -77,7 +77,7 @@ class MultiViewVideoDataset(Dataset):
 class SequentialMultiviewSampler(Sampler):
     
     def __init__(self, dataset: MultiViewVideoDataset) -> None:
-        super().__init__(dataset)
+        super().__init__()
         self.n_cams, self.n_frames = dataset.n_cams, dataset.n_frames
 
     def __iter__(self):
@@ -93,7 +93,7 @@ class SequentialMultiviewSampler(Sampler):
 class IndexedMultiviewSampler(Sampler):
     
     def __init__(self, dataset: MultiViewVideoDataset, frame_idx: int) -> None:
-        super().__init__(dataset)
+        super().__init__()
         self.n_cams, self.n_frames = dataset.n_cams, dataset.n_frames
         self.frame_idx = frame_idx
 
