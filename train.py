@@ -710,17 +710,7 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe: PipelineParams
                         progress_bar_iter.update(dataset.log_interval)
                 if iteration == opt.iterations and progress_bar_iter:
                     progress_bar_iter.close()
-                if (iteration in saving_iterations) or (iteration == opt.iterations and -1 in saving_iterations):
-                    print("\n[ITER {}] Saving Gaussians".format(iteration))
-                    if args.save_format == "pkl":
-                        # we don't save intermediate pkl files 
-                        continue
-                    elif args.save_format == "ply":
-                        scene.save(iteration)
-                    else:
-                        raise ValueError(f"Invalid save format {args.save_format}")
-                    symlink(os.path.join("..", "cfg_args"), 
-                            os.path.abspath(os.path.join(scene.model_path, "cfg_args")))
+                # Note: PLY saving moved after iteration loop to match PKL timing (after densification/pruning)
 
 
                 if dataset.timed:
@@ -843,10 +833,24 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe: PipelineParams
             torch.cuda.synchronize()
         frame_start = time.time()
 
+        # Save PLY/PKL files after iteration loop completes (after all densification/pruning)
+        # This ensures PLY and PKL files represent the same Gaussian state
+        if -1 in saving_iterations:
+            print("\n[ITER {}] Saving Gaussians".format(opt.iterations))
+            if args.save_format == "ply":
+                scene.save(opt.iterations)
+                symlink(os.path.join("..", "cfg_args"),
+                        os.path.abspath(os.path.join(scene.model_path, "cfg_args")))
+            elif args.save_format == "pkl":
+                # PKL files handled by dataset.log_compressed below
+                pass
+            else:
+                raise ValueError(f"Invalid save format {args.save_format}")
+
         if dataset.log_compressed:
             if frame_idx == 1:
                 scene.save(frame_idx, save_point_cloud=True)
-            else: 
+            else:
                 gaussians.gate_atts.eval()
                 scene.save_compressed(-1, qp)
                 gaussians.gate_atts.train()
