@@ -9,11 +9,17 @@
  * For inquiries contact  george.drettakis@inria.fr
  */
 
+/* Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved. */
+
+
 #define BOX_SIZE 1024
+
+#include <float.h>
 
 #include "cuda_runtime.h"
 #include "device_launch_parameters.h"
 #include "simple_knn.h"
+#include <cfloat>
 #include <cub/cub.cuh>
 #include <cub/device/device_radix_sort.cuh>
 #include <vector>
