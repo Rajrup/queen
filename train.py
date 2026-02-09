@@ -674,7 +674,7 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe: PipelineParams
                     
                 report = training_report(tb_writer, wandb_enabled, dataset, frame_idx, iteration, Ll1, loss, 
                                          l1_loss, cur_size, frame_time, is_test, scene, 
-                                         render_mask, (pipe, background), prev_report=report)
+                                         render_mask, (pipe, background), prev_report=report, max_iterations=opt.iterations)
                 if enable_debug:
                     print(f'DEBUG ({iteration}): training_report done')
 
@@ -1029,20 +1029,20 @@ def prepare_output_and_logger(args):
     return tb_writer
 
 def training_report(tb_writer, wandb_enabled, model_args, frame_idx, iteration, Ll1, loss, l1_loss, size, 
-                    elapsed, is_test, scene : Scene, renderFunc, renderArgs, prev_report=None):
+                    elapsed, is_test, scene : Scene, renderFunc, renderArgs, prev_report=None, max_iterations=None):
     if tb_writer:
         tb_writer.add_scalar('train_loss_patches/l1_loss', Ll1.item(), iteration)
         tb_writer.add_scalar('train_loss_patches/total_loss', loss.item(), iteration)
         tb_writer.add_scalar('elapsed', elapsed, iteration)
         tb_writer.add_scalar('size', size, iteration)
 
-    if wandb_enabled and frame_idx<=2:
+    if wandb_enabled:
         frame_str = f"{str(frame_idx).zfill(4)}"
         iter_metric = "iter_"+frame_str
         frame_str = "frame_"+frame_str
 
         # Log iterwise metrics only for the first few frames
-        if iteration % model_args.wandb_log_interval == 0:
+        if frame_idx <= 2 and iteration % model_args.wandb_log_interval == 0:
 
             wandb.log({frame_str+"/train_loss_patches/l1_loss": Ll1.item(), 
                        frame_str+"/train_loss_patches/total_loss": loss.item(), 
@@ -1077,16 +1077,22 @@ def training_report(tb_writer, wandb_enabled, model_args, frame_idx, iteration, 
                         if prev_report is None: # First time logging
                             tb_writer.add_images(config['name'] + "_view_{}/ground_truth".format(viewpoint.image_name), 
                                                  gt_image[None], global_step=iteration)
-                    if wandb_enabled and model_args.wandb_log_images and frame_idx <= 2:
-                        if prev_report is None: # First time logging
-                            wandb.log({frame_str+"/"+config['name'] + "_view_{}/ground_truth".format(viewpoint.image_name): 
-                                       wandb.Image(gt_image[None].detach().cpu().numpy(), caption="ground_truth"),
-                                       iter_metric: iteration}
-                                    )
-                        wandb.log({frame_str+"/"+config['name'] + "_view_{}/render".format(viewpoint.image_name): 
-                                    wandb.Image(image[None].detach().cpu().numpy(), caption="render"),
-                                    iter_metric: iteration}
-                                    )
+                    if wandb_enabled and model_args.wandb_log_error_maps and frame_idx <= model_args.wandb_log_error_map_frames and max_iterations is not None and iteration == max_iterations:
+                        from utils.image_utils import create_error_map_canvas
+
+                        error_canvas = create_error_map_canvas(
+                            gt_image,
+                            image,
+                            vmin=model_args.wandb_error_map_vmin,
+                            vmax=model_args.wandb_error_map_vmax,
+                            cmap_name=model_args.wandb_error_map_cmap
+                        )
+
+                        wandb.log({
+                            "frame/" + config['name'] + "_view_{}/error_map".format(camName_from_Path(viewpoint.image_path)):
+                                wandb.Image(error_canvas.permute(1, 2, 0).detach().cpu().numpy(),
+                                           caption=f"Frame {frame_idx} | GT | Rendered | Error Diff")
+                        })
                     if model_args.log_images:
                         # Not logging GTs
                         os.makedirs(os.path.join(model_args.model_path,config['name'],"renders", 
@@ -1104,9 +1110,27 @@ def training_report(tb_writer, wandb_enabled, model_args, frame_idx, iteration, 
                             os.symlink(viewpoint.image_path,os.path.join(model_args.model_path,config['name'],"gt", 
                                                                          camName_from_Path(viewpoint.image_path),str(model_args.start_idx+frame_idx).zfill(4)+".png"))
 
-                        save_image(image,os.path.join(model_args.model_path,config['name'],"renders", 
+                        save_image(image,os.path.join(model_args.model_path,config['name'],"renders",
                                                       camName_from_Path(viewpoint.image_path),str(model_args.start_idx+frame_idx).zfill(4)+".png"))
 
+                        # Save error maps locally if enabled
+                        if model_args.wandb_log_error_maps:
+                            from utils.image_utils import create_error_map_canvas
+
+                            error_map_dir = os.path.join(model_args.model_path,config['name'],"error_maps",
+                                                        camName_from_Path(viewpoint.image_path))
+                            os.makedirs(error_map_dir, exist_ok=True)
+
+                            error_canvas = create_error_map_canvas(
+                                gt_image,
+                                image,
+                                vmin=model_args.wandb_error_map_vmin,
+                                vmax=model_args.wandb_error_map_vmax,
+                                cmap_name=model_args.wandb_error_map_cmap
+                            )
+
+                            save_image(error_canvas, os.path.join(error_map_dir,
+                                                                  str(model_args.start_idx+frame_idx).zfill(4)+".png"))
 
                     l1_test += l1_loss(image, gt_image).mean().double()
                     psnr_test += psnr(image, gt_image).mean().double()
@@ -1122,8 +1146,7 @@ def training_report(tb_writer, wandb_enabled, model_args, frame_idx, iteration, 
 
                 if wandb_enabled and frame_idx <= 2:
                     wandb.log({frame_str+"/"+config["name"]+"/loss_viewpoint/l1_loss": l1_test, 
-                               frame_str+"/"+config["name"]+"/loss_viewpoint/psnr": psnr_test,
-                               iter_metric: iteration})
+                               frame_str+"/"+config["name"]+"/loss_viewpoint/psnr": psnr_test})
 
         report['iteration'] = iteration
         if tb_writer:

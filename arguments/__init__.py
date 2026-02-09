@@ -133,6 +133,11 @@ class ModelParams(ParamGroup):
         self.wandb_log_images = False
         self.wandb_tags = ""
         self.wandb_log_interval = 10
+        self.wandb_log_error_maps = True
+        self.wandb_log_error_map_frames = 2
+        self.wandb_error_map_vmin = 0.0
+        self.wandb_error_map_vmax = 0.3
+        self.wandb_error_map_cmap = "jet"
 
         self.flow_model_ckpt = 'unimatch/pretrained/gmflow-scale1-mixdata-train320x576-4c3a6e9a.pth'
         # self.depth_model_ckpt = 'unimatch/pretrained/gmdepth-scale1-regrefine1-resumeflowthings-scannet-90325722.pth'

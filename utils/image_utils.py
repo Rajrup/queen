@@ -140,6 +140,62 @@ def save_image(
     im = Image.fromarray(ndarr)
     im.save(fp)
 
+def value2color(values, vmin=0.0, vmax=0.3, cmap_name="jet"):
+    """Convert scalar error values to RGB colors using matplotlib colormaps.
+
+    Args:
+        values (np.ndarray): 1D array of scalar values
+        vmin (float): Minimum value for colormap normalization
+        vmax (float): Maximum value for colormap normalization
+        cmap_name (str): Name of matplotlib colormap (e.g., "jet", "viridis", "inferno")
+
+    Returns:
+        np.ndarray: RGB array of shape (N, 3) in range [0, 1]
+    """
+    import matplotlib.cm as cm
+
+    # Normalize values to [0, 1] range with clipping
+    normalized = np.clip((values - vmin) / (vmax - vmin), 0.0, 1.0)
+
+    # Apply colormap
+    colormap = cm.get_cmap(cmap_name)
+    colors = colormap(normalized)
+
+    # Return RGB values (discard alpha channel)
+    return colors[:, :3]
+
+@torch.no_grad()
+def create_error_map_canvas(gt_image, rendered_image, vmin=0.0, vmax=0.3, cmap_name="jet"):
+    """Create GT | Rendered | Diff concatenated visualization.
+
+    Args:
+        gt_image (torch.Tensor): Ground truth image of shape (3, H, W)
+        rendered_image (torch.Tensor): Rendered image of shape (3, H, W)
+        vmin (float): Minimum value for error colormap
+        vmax (float): Maximum value for error colormap
+        cmap_name (str): Name of matplotlib colormap
+
+    Returns:
+        torch.Tensor: Canvas tensor of shape (3, H, 3*W) containing GT | Rendered | Diff
+    """
+    # Compute error map by summing absolute differences across RGB channels
+    vis_diff = torch.abs(rendered_image - gt_image).sum(0)  # (H, W)
+
+    # Convert to numpy for colormap application
+    vis_diff_np = vis_diff.detach().cpu().numpy()
+    H, W = vis_diff_np.shape
+
+    # Apply colormap to get (H, W, 3) colored error map
+    vis_color_np = value2color(vis_diff_np.flatten(), vmin, vmax, cmap_name).reshape(H, W, 3)
+
+    # Transpose to (3, H, W) and convert back to torch tensor
+    vis_color = torch.from_numpy(vis_color_np).permute(2, 0, 1).float().to(gt_image.device)
+
+    # Concatenate horizontally: GT | Rendered | Diff
+    canvas = torch.cat((gt_image, rendered_image, vis_color), dim=2)
+
+    return canvas
+
 def write_depth(path, depth, grayscale, bits=1):
     """Write depth map to png file.
 

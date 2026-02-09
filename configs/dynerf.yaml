@@ -33,8 +33,13 @@ model_params:
     depth_until_iter: 10000
 
     # fill these in for your wandb logging
-    # wandb_project: 
-    # wandb_entity: 
+    wandb_project: ''
+    wandb_entity: ''
+    wandb_log_error_maps: True
+    wandb_log_error_map_frames: 300 # log error maps for all 300 frames in dynerf sequences
+    wandb_error_map_vmin: 0.0
+    wandb_error_map_vmax: 0.4 # all errors above 0.4 are clamped to red
+    wandb_error_map_cmap: "jet"
     wandb_tags: 'default'
     use_wandb: False
 
