@@ -102,7 +102,7 @@ class ModelParams(ParamGroup):
         self._images = "images"
         self.img_fmt = "png"
         self._resolution = -1
-        self._white_background = False
+        self.white_background = False
         self.data_device = "cuda"
         self.eval = False
         self.test_indices = [0]
