@@ -36,8 +36,8 @@ from collections import defaultdict
 import matplotlib.pyplot as plt
 from PIL import Image, ImageChops
 import torchvision.transforms.functional as F
-from utils.image_utils import psnr, save_image
-from scene.cameras import camName_from_Path, imageName_from_Path
+from utils.image_utils import psnr, save_image, value2color
+from scene.cameras import SequentialCamera, camName_from_Path, imageName_from_Path
 from argparse import ArgumentParser, Namespace
 from utils.general_utils import DecayScheduler, kthvalue
 from utils.graphics_utils import adjust_depths
@@ -112,7 +112,8 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe: PipelineParams
     print(f"training(): loading data for the first frame...")
     tic = time.time()
     train_data = next(train_loader)
-    train_images, train_paths = train_data
+    train_images, train_paths = train_data  # train_images: (N, C, H, W). If the image files contain RGBA, C can be 4.
+
     if test_image_dataset.n_cams > 0:
         test_data = next(test_loader)
         test_images, test_paths = test_data
@@ -538,7 +539,7 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe: PipelineParams
             if not camera_idx_stack:
                 camera_idx_stack = list(range(n_cams))
             cam_idx = camera_idx_stack.pop(generator.randint(0, len(camera_idx_stack)-1))
-            viewpoint_cam = train_cameras[cam_idx]
+            viewpoint_cam: SequentialCamera = train_cameras[cam_idx]
 
             # Render
 
@@ -554,6 +555,24 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe: PipelineParams
                 gt_image = transform(gt_image)
             elif opt.transform == "downsample":
                 gt_image = downsample_image(gt_image, resize_scale_sched(iteration))
+
+            # GT mask. Depending on the data, can be float value or binarized. In range [0, 1].
+            gt_mask = viewpoint_cam.original_alpha_mask  # (1, H, W)
+            if opt.lambda_alpha > 0:
+                # If enabled alpha loss, we require the data provide gt_mask
+                if gt_mask is None:
+                    raise RuntimeError(f"Alpha loss enabled, however no `gt_mask` is provided.")
+
+                if opt.transform == "resize":
+                    raise NotImplementedError(f"not yet tested")
+                    gt_mask = resize_image(gt_mask, resize_scale_sched(iteration))
+                elif "blur" in opt.transform and resize_scale_sched(iteration)!=1.0:
+                    raise NotImplementedError(f"not yet tested")
+                    if (iteration-1) % 100 == 0:
+                        transform = blur_image(resize_scale_sched(iteration), opt.transform)
+                    gt_mask = transform(gt_mask)
+                elif opt.transform == "downsample":
+                    gt_mask = downsample_image(gt_mask, resize_scale_sched(iteration))
 
             color_rw_mask = None
 
@@ -586,6 +605,13 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe: PipelineParams
                     Lssim = ssim(image, gt_image)
 
                 loss += (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - Lssim)
+                
+            # alpha mask
+            if opt.lambda_alpha > 0.0:
+                pred_alpha = render_pkg["alpha"]  # (1, H, W)
+                # Note: if need to apply selective training, use `pixel_mask`. See examples in the photometric loss above.
+                loss_alpha = l1_loss(pred_alpha, gt_mask)  # L1 loss for now. Can do BCE if gt_mask is binarized.
+                loss += opt.lambda_alpha * loss_alpha
             
             # Add regularization losses
             if opt.weight_decay>0.0:
@@ -674,7 +700,7 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe: PipelineParams
                     
                 report = training_report(tb_writer, wandb_enabled, dataset, frame_idx, iteration, Ll1, loss, 
                                          l1_loss, cur_size, frame_time, is_test, scene, 
-                                         render_mask, (pipe, background), prev_report=report, max_iterations=opt.iterations)
+                                         render_mask, (pipe, background), prev_report=report, report_alpha=True, max_iterations=opt.iterations)
                 if enable_debug:
                     print(f'DEBUG ({iteration}): training_report done')
 
@@ -1033,7 +1059,7 @@ def prepare_output_and_logger(args):
     return tb_writer
 
 def training_report(tb_writer, wandb_enabled, model_args, frame_idx, iteration, Ll1, loss, l1_loss, size, 
-                    elapsed, is_test, scene : Scene, renderFunc, renderArgs, prev_report=None, max_iterations=None):
+                    elapsed, is_test, scene : Scene, renderFunc, renderArgs, prev_report=None, report_alpha=False, max_iterations=None):
     if tb_writer:
         tb_writer.add_scalar('train_loss_patches/l1_loss', Ll1.item(), iteration)
         tb_writer.add_scalar('train_loss_patches/total_loss', loss.item(), iteration)
@@ -1073,7 +1099,8 @@ def training_report(tb_writer, wandb_enabled, model_args, frame_idx, iteration, 
                     os.makedirs(os.path.join(model_args.model_path,config['name'],"gt"),exist_ok=True)
                     os.makedirs(os.path.join(model_args.model_path,config['name'],"renders"),exist_ok=True)
                 for idx, viewpoint in enumerate(config['cameras']):
-                    image = torch.clamp(renderFunc(viewpoint, scene.gaussians, *renderArgs)["render"], 0.0, 1.0)
+                    rendered = renderFunc(viewpoint, scene.gaussians, *renderArgs)
+                    image = torch.clamp(rendered["render"], 0.0, 1.0)
                     gt_image = torch.clamp(viewpoint.original_image, 0.0, 1.0)
                     if tb_writer and (idx < 5):
                         tb_writer.add_images(config['name'] + "_view_{}/render".format(viewpoint.image_name), 
@@ -1135,6 +1162,42 @@ def training_report(tb_writer, wandb_enabled, model_args, frame_idx, iteration, 
 
                             save_image(error_canvas, os.path.join(error_map_dir,
                                                                   str(model_args.start_idx+frame_idx).zfill(4)+".png"))
+
+                        # visualize alpha mask if possible
+                        if report_alpha:
+                            if viewpoint.original_alpha_mask is None:
+                                if verbose:
+                                    print(f"training_report(): since the dataloader does not provide `original_alpha_mask`, will skip visualizing alpha.")
+                            else:
+                                # assert viewpoint.gt_alpha_mask is not None, "assume dataloader provides gt_alpha_mask."
+                                alpha = torch.clamp(rendered["alpha"], 0.0, 1.0)  # (1, H, W)
+                                gt_alpha = torch.clamp(viewpoint.original_alpha_mask, 0.0, 1.0)  # (1, H, W)
+
+                                def _colormap(_data, vmin, vmax, cmap_name="jet"):
+                                    # _data: tensor, (H, W)
+                                    _height = _data.shape[0]
+                                    _width = _data.shape[1]
+                                    _data_np = _data.detach().cpu().numpy()  # (H, W)
+                                    _vis = value2color(_data_np.ravel(), vmin=vmin, vmax=vmax, cmap_name=cmap_name)  # (HW, 3)
+                                    _vis = np.transpose(_vis.reshape((_height, _width, 3)), (2, 0, 1))  # (3, H, W)
+                                    _vis = torch.from_numpy(_vis).float().to(_data.device)
+                                    return _vis
+
+                                # vis range for alpha: [0, 1]
+                                # vis range for alpha diff: choose to use [0, 1] as well for consistent color mapping
+                                vis_alpha = _colormap(alpha[0], vmin=0.0, vmax=1.0, cmap_name="jet")
+                                vis_gt_alpha = _colormap(gt_alpha[0], vmin=0.0, vmax=1.0, cmap_name="jet")
+                                vis_diff_alpha = _colormap(torch.abs(alpha - gt_alpha)[0], vmin=0.0, vmax=1.0, cmap_name="jet")
+                                canvas = torch.cat((vis_gt_alpha, vis_alpha, vis_diff_alpha), dim=2)
+                                save_image(
+                                    canvas,
+                                    os.path.join(
+                                        model_args.model_path,config['name'],
+                                        "renders",
+                                        camName_from_Path(viewpoint.image_path),
+                                        "compare_alpha_" + str(model_args.start_idx + frame_idx).zfill(4) + ".png"
+                                    )
+                                )
 
                     l1_test += l1_loss(image, gt_image).mean().double()
                     psnr_test += psnr(image, gt_image).mean().double()

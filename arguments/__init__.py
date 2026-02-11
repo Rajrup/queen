@@ -215,6 +215,10 @@ class OptimizationParamsRest(ParamGroup):
         self.lambda_consistency_rest = 0.0
         self.lambda_tv_rest = 0.0
         self.lambda_posres_rest = 0.0
+
+        # alpha loss
+        self.lambda_alpha_rest = 0.0
+
         self.color_from_iter_rest = 0
         self.depth_from_iter_rest = 4000
         self.depth_until_iter_rest = 10000
@@ -298,6 +302,10 @@ class OptimizationParamsInitial(ParamGroup):
         self.lambda_consistency = 0.0
         self.lambda_tv = 0.0
         self.lambda_posres = 0.0
+
+        # alpha loss
+        self.lambda_alpha = 0.0
+
         self.color_from_iter = 0
         self.depth_from_iter = 4000
         self.depth_until_iter = 4000
