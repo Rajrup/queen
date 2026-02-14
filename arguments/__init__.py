@@ -102,7 +102,7 @@ class ModelParams(ParamGroup):
         self._images = "images"
         self.img_fmt = "png"
         self._resolution = -1
-        self._white_background = False
+        self.white_background = False
         self.data_device = "cuda"
         self.eval = False
         self.test_indices = [0]
@@ -133,6 +133,11 @@ class ModelParams(ParamGroup):
         self.wandb_log_images = False
         self.wandb_tags = ""
         self.wandb_log_interval = 10
+        self.wandb_log_error_maps = True
+        self.wandb_log_error_map_frames = 2
+        self.wandb_error_map_vmin = 0.0
+        self.wandb_error_map_vmax = 0.3
+        self.wandb_error_map_cmap = "jet"
 
         self.flow_model_ckpt = 'unimatch/pretrained/gmflow-scale1-mixdata-train320x576-4c3a6e9a.pth'
         # self.depth_model_ckpt = 'unimatch/pretrained/gmdepth-scale1-regrefine1-resumeflowthings-scannet-90325722.pth'
@@ -210,6 +215,10 @@ class OptimizationParamsRest(ParamGroup):
         self.lambda_consistency_rest = 0.0
         self.lambda_tv_rest = 0.0
         self.lambda_posres_rest = 0.0
+
+        # alpha loss
+        self.lambda_alpha_rest = 0.0
+
         self.color_from_iter_rest = 0
         self.depth_from_iter_rest = 4000
         self.depth_until_iter_rest = 10000
@@ -293,6 +302,10 @@ class OptimizationParamsInitial(ParamGroup):
         self.lambda_consistency = 0.0
         self.lambda_tv = 0.0
         self.lambda_posres = 0.0
+
+        # alpha loss
+        self.lambda_alpha = 0.0
+
         self.color_from_iter = 0
         self.depth_from_iter = 4000
         self.depth_until_iter = 4000

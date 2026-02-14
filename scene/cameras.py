@@ -104,6 +104,8 @@ class SequentialCamera(nn.Module):
         self.image_width = image_wh[0]
         self.image_height = image_wh[1]
 
+        self.original_alpha_mask = gt_alpha_mask
+
         self.zfar = zfar
         self.znear = znear
 
@@ -142,7 +144,12 @@ class SequentialCamera(nn.Module):
             self.image_diff.requires_grad_(False)
         self.original_image = new_image
         if gt_alpha_mask is not None:
+            # NOTE: here we actually mask the input RGB image with the mask
             self.original_image *= gt_alpha_mask.to(self.data_device)
+            # update the alpha mask (for the alpha loss)
+            self.original_alpha_mask = gt_alpha_mask.to(self.data_device)
+        else:
+            pass
 
 class MiniCam:
     def __init__(self, uid, width, height, fovy, fovx, znear, zfar, world_view_transform, full_proj_transform, camera_center=None, frame_idx=0):
