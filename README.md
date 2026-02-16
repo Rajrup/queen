@@ -67,6 +67,8 @@ ln -s /synology/rajrup/Queen/Neural_3D_Video/cook_spinach/ data/multipleview/
 
 ```bash
 python train.py --config configs/dynerf.yaml --log_images --log_ply -s data/multipleview/cook_spinach -m ./output/cook_spinach_trained
+
+# Saving compressed model
 python train.py --config configs/dynerf.yaml --log_images --log_compressed --log_ply -s data/multipleview/cook_spinach -m ./output/cook_spinach_trained_compressed
 ```
 
@@ -75,8 +77,11 @@ python train.py --config configs/dynerf.yaml --log_images --log_compressed --log
 ```bash
 python metrics_video.py -m ./output/cook_spinach_trained
 
-# Render static camera viewpoints and spiral
+# Render static camera viewpoints and spiral if trained w/o --log_compressed
 python render.py -s data/multipleview/cook_spinach -m ./output/cook_spinach_trained
 python render_fvv.py --config configs/dynerf.yaml  -s data/multipleview/cook_spinach -m ./output/cook_spinach_trained
+
+# Render static camera viewpoints and spiral if trained w/ --log_compressed
+python render_fvv_compressed.py --config configs/dynerf.yaml  -s data/multipleview/cook_spinach -m ./output/cook_spinach_trained_compressed
 ```
 

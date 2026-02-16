@@ -260,4 +260,8 @@ libboost/
 eigen/
 logs/
 __pycache__
+submodules/simple-knn/build/
+**/build/
+*.egg-info/
 *.code-workspace
+.cursorignore
