@@ -10,3 +10,6 @@
 [submodule "MiDaS"]
 	path = MiDaS
 	url = https://github.com/isl-org/MiDaS.git
+[submodule "LiVoGS"]
+	path = LiVoGS
+	url = https://github.com/haodongw101/LiVoGS.git

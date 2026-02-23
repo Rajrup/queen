@@ -82,6 +82,6 @@ python render.py -s data/multipleview/cook_spinach -m ./output/cook_spinach_trai
 python render_fvv.py --config configs/dynerf.yaml  -s data/multipleview/cook_spinach -m ./output/cook_spinach_trained
 
 # Render static camera viewpoints and spiral if trained w/ --log_compressed
-python render_fvv_compressed.py --config configs/dynerf.yaml  -s data/multipleview/cook_spinach -m ./output/cook_spinach_trained_compressed
+python render_fvv_compressed.py --config configs/dynerf.yaml  -s data/multipleview/cook_spinach -m ./output/cook_spinach_trained_compressed --render_compare
 ```
 
