@@ -8,7 +8,7 @@
 ## Install Dependencies
 
 ```bash
-git clone --recurse-submodules git@github.com:NVlabs/queen.git Queen
+git clone --recurse-submodules https://github.com/Rajrup/queen.git Queen
 cd Queen
 # set up some relevant directories
 mkdir -p data
@@ -46,42 +46,59 @@ wget -P MiDaS/weights https://github.com/isl-org/MiDaS/releases/download/v3_1/dp
 ## Data Preparation
 
 ### Neural 3D Video (or DyNeRF)
-```bash
-mkdir -p data/multipleview
 
-mkdir -p /synology/rajrup/Queen/Neural_3D_Video/cook_spinach
-for i in $(seq -w 0 20); do ln -s /synology/rajrup/4DGaussians/Neural_3D_Video/cook_spinach/cam${i} /synology/rajrup/Queen/Neural_3D_Video/cook_spinach/; done
-ln -s /synology/rajrup/4DGaussians/Neural_3D_Video/cook_spinach/points3D_downsample2.ply /synology/rajrup/Queen/Neural_3D_Video/cook_spinach/
-ln -s /synology/rajrup/4DGaussians/Neural_3D_Video/cook_spinach/poses_bounds.npy /synology/rajrup/Queen/Neural_3D_Video/cook_spinach/
-ln -s /synology/rajrup/4DGaussians/Neural_3D_Video/cook_spinach/colmap /synology/rajrup/Queen/Neural_3D_Video/cook_spinach/
-ln -s /synology/rajrup/4DGaussians/Neural_3D_Video/cook_spinach/image_colmap /synology/rajrup/Queen/Neural_3D_Video/cook_spinach/
-ln -s /synology/rajrup/4DGaussians/Neural_3D_Video/cook_spinach/sparse_ /synology/rajrup/Queen/Neural_3D_Video/cook_spinach/
-ln -s /synology/rajrup/Queen/Neural_3D_Video/cook_spinach/ data/multipleview/
+- Use 4DGaussians to preprocess the Neural 3D Video dataset.
+- Follow instructions in `scripts/preprocess_dynerf.sh` to preprocess the Neural 3D Video dataset or follow: [here](https://github.com/hustvl/4DGaussians?tab=readme-ov-file#training)
+- Preprocessed data: `/synology/rajrup/Queen/Neural_3D_Video`
+
+```bash
+conda activate Gaussians4D
+cd /home/rajrup/project/4DGaussians/
+./scripts/preprocess_dynerf.sh # Change sequence name before running.
 ```
 
 ### Google Immersive
 
 ## Training
 
-### Training DyNeRF
+### Training DyNeRF (Neural 3D Video)
 
 ```bash
-python train.py --config configs/dynerf.yaml --log_images --log_ply -s data/multipleview/cook_spinach -m ./output/cook_spinach_trained
+python train.py --config configs/dynerf.yaml --log_images --log_ply -s /synology/rajrup/Queen/Neural_3D_Video/cook_spinach -m /synology/rajrup/Queen/train_output/Neural_3D_Video/cook_spinach
 
 # Saving compressed model
-python train.py --config configs/dynerf.yaml --log_images --log_compressed --log_ply -s data/multipleview/cook_spinach -m ./output/cook_spinach_trained_compressed
+python train.py --config configs/dynerf.yaml --log_images --log_compressed --log_ply -s /synology/rajrup/Queen/Neural_3D_Video/cook_spinach -m /synology/rajrup/Queen/train_output/Neural_3D_Video/cook_spinach
 ```
 
 ### Evaluation
 
 ```bash
-python metrics_video.py -m ./output/cook_spinach_trained
+python metrics_video.py -m /synology/rajrup/Queen/train_output/Neural_3D_Video/cook_spinach
 
 # Render static camera viewpoints and spiral if trained w/o --log_compressed
-python render.py -s data/multipleview/cook_spinach -m ./output/cook_spinach_trained
-python render_fvv.py --config configs/dynerf.yaml  -s data/multipleview/cook_spinach -m ./output/cook_spinach_trained
+python render.py -s /synology/rajrup/Queen/Neural_3D_Video/cook_spinach -m /synology/rajrup/Queen/train_output/Neural_3D_Video/cook_spinach
+python render_fvv.py --config configs/dynerf.yaml  -s /synology/rajrup/Queen/Neural_3D_Video/cook_spinach -m /synology/rajrup/Queen/train_output/Neural_3D_Video/cook_spinach
 
 # Render static camera viewpoints and spiral if trained w/ --log_compressed
-python render_fvv_compressed.py --config configs/dynerf.yaml  -s data/multipleview/cook_spinach -m ./output/cook_spinach_trained_compressed --render_compare
+python render_fvv_compressed.py --config configs/dynerf.yaml  -s /synology/rajrup/Queen/Neural_3D_Video/cook_spinach -m /synology/rajrup/Queen/train_output/Neural_3D_Video/cook_spinach_compressed --render_compare
 ```
 
+## Compression
+
+### VideoGS 2D Codec
+
+```bash
+bash scripts/videogs_baseline/evaluate_videogs_compression.sh
+
+# Generate plots
+bash scripts/videogs_baseline/plots/plot_benchmark.sh
+```
+
+### LiVoGS 3D Codec
+
+```bash
+bash scripts/livogs_baseline/evaluate_livogs_compression.sh
+
+# Generate plots
+bash scripts/livogs_baseline/plots/plot_benchmark.sh
+```

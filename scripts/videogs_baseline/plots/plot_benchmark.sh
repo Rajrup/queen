@@ -1,11 +1,13 @@
 #!/bin/bash
 
 # Plot benchmark results for VideoGS compression on QUEEN-trained models
+DATASET_NAME="Neural_3D_Video"
 SEQUENCE_NAME="cook_spinach"
 QP=22
 
 QUEEN_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-input_folder="${QUEEN_ROOT}/output/${SEQUENCE_NAME}_trained_compressed/compression/videogs"
+data_path="/synology/rajrup/Queen"
+input_folder="${data_path}/pretrained_output/${DATASET_NAME}/queen_compressed_${SEQUENCE_NAME}/compression/videogs"
 plot_script_folder="${QUEEN_ROOT}/scripts/videogs_baseline/plots"
 
 # Plot compressed size breakdown + point counts

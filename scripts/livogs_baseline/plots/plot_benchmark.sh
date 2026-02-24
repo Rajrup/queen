@@ -1,6 +1,7 @@
 #!/bin/bash
 
 # Plot benchmark results for LiVoGS compression on QUEEN-trained models
+DATASET_NAME="Neural_3D_Video"
 SEQUENCE_NAME="cook_spinach"
 J=15
 QUANTIZE_STEP=0.0001
@@ -8,7 +9,8 @@ SH_COLOR_SPACE="klt"
 CONFIG_NAME="J_${J}_qstep_${QUANTIZE_STEP}_${SH_COLOR_SPACE}"
 
 QUEEN_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-input_folder="${QUEEN_ROOT}/output/${SEQUENCE_NAME}_trained_compressed/compression/livogs"
+data_path="/synology/rajrup/Queen"
+input_folder="${data_path}/pretrained_output/${DATASET_NAME}/queen_compressed_${SEQUENCE_NAME}/compression/livogs"
 plot_script_folder="${QUEEN_ROOT}/scripts/livogs_baseline/plots"
 
 # Plot compressed size breakdown + point counts

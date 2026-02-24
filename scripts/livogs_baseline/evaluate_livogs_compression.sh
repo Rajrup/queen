@@ -2,6 +2,7 @@
 
 # Evaluate LiVoGS compression pipeline for QUEEN-trained models
 # Dataset: cook_spinach from Neural_3D_Video (DyNeRF)
+DATASET_NAME="Neural_3D_Video"
 SEQUENCE_NAME="cook_spinach"
 
 # LiVoGS compression parameters
@@ -16,8 +17,9 @@ SH_COLOR_SPACE="klt"    # Color space: rgb, yuv, klt
 RLGR_BLOCK_SIZE=4096    # RLGR parallel block size
 
 QUEEN_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-dataset_path="${QUEEN_ROOT}/data/multipleview/${SEQUENCE_NAME}"
-gt_model_path="${QUEEN_ROOT}/output/${SEQUENCE_NAME}_trained_compressed"
+data_path="/synology/rajrup/Queen"
+dataset_path="${data_path}/${DATASET_NAME}/${SEQUENCE_NAME}"
+gt_model_path="${data_path}/pretrained_output/${DATASET_NAME}/queen_compressed_${SEQUENCE_NAME}"
 output_folder="${gt_model_path}/compression/livogs/J_${J}_qstep_${QUANTIZE_STEP}_${SH_COLOR_SPACE}"
 
 # Activate conda environment
