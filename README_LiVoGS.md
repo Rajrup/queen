@@ -16,8 +16,7 @@ git submodule update --init compression/PyRLGR/thirdparty/pybind11
 
 # Install Octree Compression
 cd compression/Octree_Compression_GPU
-bash install_dependencies.sh
-make
+make pybind
 
 # Install RAHT-3DGS-codec
 cd ../RAHT-3DGS-codec/cuda

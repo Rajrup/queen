@@ -12,6 +12,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--input_folder", type=str, required=True,
                         help="Base folder for livogs_compression")
+    parser.add_argument("--dataset_name", type=str, required=True, help="Dataset name (e.g. Neural_3D_Video)")
+    parser.add_argument("--sequence_name", type=str, required=True, help="Sequence name (e.g. cook_spinach)")
     parser.add_argument("--j", type=int, required=True, help="Octree depth J (e.g. 15)")
     parser.add_argument("--qstep", type=str, required=True, help="Quantization step (e.g. 0.0001)")
     parser.add_argument("--sh_color_space", type=str, required=True, help="Color space (e.g. klt)")
@@ -22,7 +24,7 @@ def main():
     config_name = f"J_{args.j}_qstep_{args.qstep}_{args.sh_color_space}"
     config_dir = os.path.join(args.input_folder, config_name)
     evaluation_csv = os.path.join(config_dir, "evaluation", "evaluation_results.csv")
-    out_dir = os.path.join(args.output_folder, "plots", "livogs_compression", config_name)
+    out_dir = os.path.join(args.output_folder, "plots", args.dataset_name, args.sequence_name, config_name)
     out_path = os.path.join(out_dir, "quality.png")
     os.makedirs(out_dir, exist_ok=True)
 
@@ -51,7 +53,7 @@ def main():
     ax1.plot(x, gt_psnr, "o-", label="GT model", color="green", markersize=3)
     ax1.plot(x, decomp_psnr, "s-", label="LiVoGS decompressed", color="coral", markersize=3)
     ax1.set_ylabel("PSNR (dB)")
-    ax1.set_title(f"Quality per frame: GT vs LiVoGS [{config_name}]")
+    ax1.set_title(f"Quality per frame: GT vs LiVoGS [{config_name}, {args.dataset_name}, {args.sequence_name}]")
     avg_gt = sum(gt_psnr) / n
     avg_dec = sum(decomp_psnr) / n
     ax1.axhline(y=avg_gt, color="green", linestyle="--", alpha=0.4,

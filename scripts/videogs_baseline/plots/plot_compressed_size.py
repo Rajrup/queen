@@ -43,6 +43,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--input_folder", type=str, required=True,
                         help="Base folder for videogs_compression")
+    parser.add_argument("--dataset_name", type=str, required=True, help="Dataset name (e.g. Neural_3D_Video)")
+    parser.add_argument("--sequence_name", type=str, required=True, help="Sequence name (e.g. cook_spinach)")
     parser.add_argument("--qp", type=int, required=True, help="QP value (e.g. 22)")
     parser.add_argument("--output_folder", type=str, required=True,
                         help="Output folder for plot PNG")
@@ -51,7 +53,7 @@ def main():
     qp_dir = os.path.join(args.input_folder, f"qp_{args.qp}")
     png_csv = os.path.join(qp_dir, "compressed_png", "benchmark_compress_to_png.csv")
     video_csv = os.path.join(qp_dir, "compressed_video", "benchmark_compress_png_2_video.csv")
-    out_dir = os.path.join(args.output_folder, "plots", "videogs_compression", f"qp_{args.qp}")
+    out_dir = os.path.join(args.output_folder, "plots", args.dataset_name, args.sequence_name, f"qp_{args.qp}")
     os.makedirs(out_dir, exist_ok=True)
 
     if not os.path.isfile(png_csv):
@@ -92,7 +94,7 @@ def main():
     ax.plot(x, video_sizes_mb, "^-", label="MP4 (avg/frame)", color="coral", markersize=2)
     ax.set_xlabel("Frame")
     ax.set_ylabel("Size (MB)")
-    ax.set_title(f"VideoGS size per frame [QP={args.qp}]")
+    ax.set_title(f"VideoGS size per frame [QP={args.qp}, {args.dataset_name}, {args.sequence_name}]")
     ax.set_ylim(bottom=0)
     ax.set_xticks(list(x)[::tick_every])
     ax.set_xticklabels(frame_ids[::tick_every], rotation=90)
@@ -122,7 +124,7 @@ def main():
     ax.plot(x, orig_pts, "o-", label="Original points", color="steelblue", markersize=2)
     ax.set_xlabel("Frame")
     ax.set_ylabel("Number of Gaussians")
-    ax.set_title(f"VideoGS point count per frame [QP={args.qp}]")
+    ax.set_title(f"VideoGS point count per frame [QP={args.qp}, {args.dataset_name}, {args.sequence_name}]")
     ax.set_ylim(bottom=0)
     ax.set_xticks(list(x)[::tick_every])
     ax.set_xticklabels(frame_ids[::tick_every], rotation=90)

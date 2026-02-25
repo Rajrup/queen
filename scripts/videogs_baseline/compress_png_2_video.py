@@ -1,38 +1,21 @@
 import os
 import csv
 import time
+import sys
 import shutil
 import argparse
 import json
-import subprocess
 from tqdm import tqdm
 
+# --- Setup sys.path for LiVoGS imports ---
+_THIS_DIR = os.path.dirname(os.path.abspath(__file__))
+_QUEEN_ROOT = os.path.dirname(os.path.dirname(_THIS_DIR))   
+_VIDEOGS_COMPRESSION = os.path.join(_QUEEN_ROOT, "VideoGS", "compression")
 
-def get_qp_capped_channels(sh_degree):
-    """Compute channel indices that should be capped at QP=22, matching the original
-    compress_image_2_video.py logic: DC color, scale, and rotation channels.
+if _VIDEOGS_COMPRESSION not in sys.path:
+    sys.path.insert(0, _VIDEOGS_COMPRESSION)
 
-    Channel layout from compress_to_png_full_sh.py:
-      0,1  = x (low, high)
-      2,3  = y (low, high)
-      4,5  = z (low, high)
-      6    = nx
-      7    = ny
-      8    = nz
-      9    = f_dc_0
-      10   = f_dc_1
-      11   = f_dc_2
-      12.. = f_rest_0 .. f_rest_{n_rest-1}
-      ...  = opacity
-      ...  = scale_0, scale_1, scale_2
-      ...  = rot_0, rot_1, rot_2, rot_3
-    """
-    n_rest = (sh_degree + 1) ** 2 * 3 - 3
-    dc_channels = [9, 10, 11]
-    scale_channels = [12 + n_rest + 1, 12 + n_rest + 2, 12 + n_rest + 3]
-    rot_channels = [12 + n_rest + 4, 12 + n_rest + 5, 12 + n_rest + 6, 12 + n_rest + 7]
-    return set(dc_channels + scale_channels + rot_channels)
-
+from compress_decompress import get_qp_capped_channels, encode_videogs_video
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Compress PNG attribute images to H.264 MP4 videos using ffmpeg")
@@ -86,17 +69,7 @@ if __name__ == "__main__":
             else:
                 ch_qp = args.qp
 
-            cmd = [
-                "ffmpeg", "-y", "-loglevel", "error",
-                "-start_number", str(frame_start),
-                "-i", os.path.join(input_group_path, f"%d_{ch}.png"),
-                "-vframes", str(group_size),
-                "-c:v", "libx264",
-                "-qp", str(ch_qp),
-                "-pix_fmt", "yuvj444p",
-                os.path.join(output_group_path, f"{ch}.mp4")
-            ]
-            subprocess.run(cmd, check=True)
+            encode_videogs_video(frame_start, group_size, ch, ch_qp, input_group_path, output_group_path)
 
         t1 = time.perf_counter()
         group_time_ms = (t1 - t0) * 1000

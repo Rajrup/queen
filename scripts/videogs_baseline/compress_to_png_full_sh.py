@@ -1,28 +1,22 @@
 import os
 import csv
 import time
+import sys
 import numpy as np
-import cv2
 from plyfile import PlyData
 import json
 import argparse
 from tqdm import tqdm
 
-def normalize_uint8(data):
-    min_val = np.min(data)
-    max_val = np.max(data)
-    if max_val == min_val:
-        return np.zeros_like(data, dtype=np.uint8), min_val, max_val
-    normalized = (data - min_val) / (max_val - min_val) * 255.0
-    return normalized.astype(np.uint8), min_val, max_val
+# --- Setup sys.path for LiVoGS imports ---
+_THIS_DIR = os.path.dirname(os.path.abspath(__file__))
+_QUEEN_ROOT = os.path.dirname(os.path.dirname(_THIS_DIR))   
+_VIDEOGS_COMPRESSION = os.path.join(_QUEEN_ROOT, "VideoGS", "compression")
 
-def normalize_uint16(data):
-    min_val = np.min(data)
-    max_val = np.max(data)
-    if max_val == min_val:
-        return np.zeros_like(data, dtype=np.uint16), min_val, max_val
-    normalized = (data - min_val) / (max_val - min_val) * (2 ** 16 - 1)
-    return normalized.astype(np.uint16), min_val, max_val
+if _VIDEOGS_COMPRESSION not in sys.path:
+    sys.path.insert(0, _VIDEOGS_COMPRESSION)
+
+from compress_decompress import calculate_image_size, quantize_videogs_image, encode_videogs_png
 
 def get_ply_matrix(file_path):
     plydata = PlyData.read(file_path)
@@ -36,12 +30,6 @@ def get_ply_matrix(file_path):
     n_float = len(float_names) - 3
     uncompressed_size_bytes = num_vertices * n_float * np.dtype(np.float32).itemsize
     return data_matrix, uncompressed_size_bytes
-
-def calculate_image_size(num_points):
-    image_size = 8
-    while image_size * image_size < num_points:
-        image_size += 8
-    return image_size
 
 def searchForMaxIteration(folder):
     saved_iters = [int(fname.split("_")[-1]) for fname in os.listdir(folder) if "iteration_" in fname]
@@ -59,54 +47,6 @@ def find_queen_ply_path(ply_root, frame):
         max_iter = searchForMaxIteration(ckpt_path)
         return os.path.join(ckpt_path, f"iteration_{max_iter}", "point_cloud.ply")
     return None
-
-def quantize_videogs_image(current_data, image_size):
-    num_attributes = current_data.shape[1]
-    images = {}
-    min_max_info = {}
-    
-    for i in range(num_attributes):
-        # Position attributes (0, 1, 2) -> uint16 split
-        if i < 3:
-            attribute_data, min_val, max_val = normalize_uint16(current_data[:, i])
-            min_max_info[f'{i}_min'] = float(min_val)
-            min_max_info[f'{i}_max'] = float(max_val)
-            
-            attribute_data_reshaped = attribute_data.reshape(-1, 1)
-            image_odd = np.zeros((image_size * image_size, 1), dtype=np.uint8)
-            image_even = np.zeros((image_size * image_size, 1), dtype=np.uint8)
-            
-            # Even = Low Byte, Odd = High Byte
-            image_even[:attribute_data_reshaped.shape[0], :] += (attribute_data_reshaped & 0xff)
-            image_odd[:attribute_data_reshaped.shape[0], :] += (attribute_data_reshaped >> 8)
-            
-            images[f"{2*i}"] = image_even.reshape((image_size, image_size))
-            images[f"{2*i+1}"] = image_odd.reshape((image_size, image_size))
-            
-        else:
-            attribute_data, min_val, max_val = normalize_uint8(current_data[:, i])
-            min_max_info[f'{i}_min'] = float(min_val)
-            min_max_info[f'{i}_max'] = float(max_val)
-            
-            attribute_data_reshaped = attribute_data.reshape(-1, 1)
-            image = np.zeros((image_size * image_size, 1), dtype=np.uint8)
-            image[:attribute_data_reshaped.shape[0], :] = attribute_data_reshaped
-            
-            # Offset index by +3 to match VideoGS convention (normals start at 6, etc.)
-            # But wait, if we are just compressing generic attributes, we should just map i -> output_index
-            # VideoGS convention: 
-            # i=0 (x) -> 0, 1
-            # i=1 (y) -> 2, 3
-            # i=2 (z) -> 4, 5
-            # i=3 (nx) -> 6
-            # ...
-            images[f"{i+3}"] = image.reshape((image_size, image_size))
-            
-    return images, min_max_info
-
-def encode_videogs_png(images, output_path, frame_idx):
-    for key, img in images.items():
-        cv2.imwrite(os.path.join(output_path, f"{frame_idx}_{key}.png"), img)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

@@ -41,6 +41,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--input_folder", type=str, required=True,
                         help="Base folder for videogs_compression")
+    parser.add_argument("--dataset_name", type=str, required=True, help="Dataset name (e.g. Neural_3D_Video)")
+    parser.add_argument("--sequence_name", type=str, required=True, help="Sequence name (e.g. cook_spinach)")
     parser.add_argument("--qp", type=int, required=True, help="QP value (e.g. 22)")
     parser.add_argument("--output_folder", type=str, required=True,
                         help="Output folder for plot PNG")
@@ -51,7 +53,7 @@ def main():
     video_compress_csv = os.path.join(qp_dir, "compressed_video", "benchmark_compress_png_2_video.csv")
     video_decompress_csv = os.path.join(qp_dir, "decompressed_png", "benchmark_decompress_video_2_png.csv")
     png_decompress_csv = os.path.join(qp_dir, "decompressed_ply", "benchmark_decompress_from_png.csv")
-    out_dir = os.path.join(args.output_folder, "plots", "videogs_compression", f"qp_{args.qp}")
+    out_dir = os.path.join(args.output_folder, "plots", args.dataset_name, args.sequence_name, f"qp_{args.qp}")
     out_path = os.path.join(out_dir, "compression_time.png")
     os.makedirs(out_dir, exist_ok=True)
 
@@ -127,7 +129,7 @@ def main():
     ax.set_xticklabels(frame_ids[::tick_every], rotation=90)
     ax.legend(loc="upper right")
     ax.grid(True, alpha=0.3)
-    ax.set_title(f"VideoGS compression and decompression time per frame [QP={args.qp}]")
+    ax.set_title(f"VideoGS compression and decompression time per frame [QP={args.qp}, {args.dataset_name}, {args.sequence_name}]")
 
     avg_cpng = sum(compress_png) / n
     avg_cvid = sum(compress_video) / n

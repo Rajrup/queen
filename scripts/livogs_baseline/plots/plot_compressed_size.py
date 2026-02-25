@@ -33,6 +33,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--input_folder", type=str, required=True,
                         help="Base folder for livogs_compression")
+    parser.add_argument("--dataset_name", type=str, required=True, help="Dataset name (e.g. Neural_3D_Video)")
+    parser.add_argument("--sequence_name", type=str, required=True, help="Sequence name (e.g. cook_spinach)")
     parser.add_argument("--j", type=int, required=True, help="Octree depth J (e.g. 15)")
     parser.add_argument("--qstep", type=str, required=True, help="Quantization step (e.g. 0.0001)")
     parser.add_argument("--sh_color_space", type=str, required=True, help="Color space (e.g. klt)")
@@ -43,7 +45,7 @@ def main():
     config_name = f"J_{args.j}_qstep_{args.qstep}_{args.sh_color_space}"
     config_dir = os.path.join(args.input_folder, config_name)
     csv_path = os.path.join(config_dir, "benchmark_livogs.csv")
-    out_dir = os.path.join(args.output_folder, "plots", "livogs_compression", config_name)
+    out_dir = os.path.join(args.output_folder, "plots", args.dataset_name, args.sequence_name, config_name)
     os.makedirs(out_dir, exist_ok=True)
 
     if not os.path.isfile(csv_path):
@@ -69,7 +71,7 @@ def main():
 
     ax.set_xlabel("Frame")
     ax.set_ylabel("Size (MB)")
-    ax.set_title(f"LiVoGS size breakdown per frame [{config_name}]")
+    ax.set_title(f"LiVoGS size breakdown per frame [{config_name}, {args.dataset_name}, {args.sequence_name}]")
     ax.set_ylim(bottom=0)
     ax.set_xticks(list(x)[::tick_every])
     ax.set_xticklabels(frame_ids[::tick_every], rotation=90)
@@ -102,7 +104,7 @@ def main():
 
     ax.set_xlabel("Frame")
     ax.set_ylabel("Number of Gaussians")
-    ax.set_title(f"Point counts per frame [{config_name}]")
+    ax.set_title(f"Point counts per frame [{config_name}, {args.dataset_name}, {args.sequence_name}]")
     ax.set_ylim(bottom=0)
     ax.set_xticks(list(x)[::tick_every])
     ax.set_xticklabels(frame_ids[::tick_every], rotation=90)

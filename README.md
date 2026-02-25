@@ -26,6 +26,7 @@ conda activate queen
 sudo apt-get install libglm-dev libgl1 -y
 pip install six
 pip install -e .
+pip install torchmetrics[image]
 pip install tensorboard
 
 # Install CUDA-dependent submodules (must be installed with --no-build-isolation)
@@ -36,6 +37,10 @@ pip install --no-build-isolation ./submodules/gaussian-rasterization-grad
 # Apply timm package patch (required for compatibility)
 python scripts/patch_timm.py
 ```
+
+**Dependencies for LiVoGS:**
+
+Follow the instructions in `README_LiVoGS.md` to set up LiVoGS.
 
 ### Download weights for MiDaS
 

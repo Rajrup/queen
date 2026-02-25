@@ -13,3 +13,6 @@
 [submodule "LiVoGS"]
 	path = LiVoGS
 	url = https://github.com/haodongw101/LiVoGS.git
+[submodule "VideoGS"]
+	path = VideoGS
+	url = https://github.com/Rajrup/VideoGS.git

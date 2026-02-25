@@ -3,11 +3,16 @@
 # Evaluate LiVoGS compression pipeline for QUEEN-trained models
 # Dataset: cook_spinach from Neural_3D_Video (DyNeRF)
 DATASET_NAME="Neural_3D_Video"
-SEQUENCE_NAME="cook_spinach"
+SEQUENCE_NAME="coffee_martini"    # Failed at Frame: 52
+# SEQUENCE_NAME="cook_spinach"      # Done
+# SEQUENCE_NAME="cut_roasted_beef"  # Done
+# SEQUENCE_NAME="flame_salmon_1"    # Done
+# SEQUENCE_NAME="flame_steak"       # Done
+# SEQUENCE_NAME="sear_steak"        # Done
 
 # LiVoGS compression parameters
 START_FRAME=1
-END_FRAME=300
+END_FRAME=20
 INTERVAL=1
 SH_DEGREE=2
 
@@ -16,7 +21,6 @@ QUANTIZE_STEP=0.0001    # Uniform quantization step
 SH_COLOR_SPACE="klt"    # Color space: rgb, yuv, klt
 RLGR_BLOCK_SIZE=4096    # RLGR parallel block size
 
-QUEEN_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 data_path="/synology/rajrup/Queen"
 dataset_path="${data_path}/${DATASET_NAME}/${SEQUENCE_NAME}"
 gt_model_path="${data_path}/pretrained_output/${DATASET_NAME}/queen_compressed_${SEQUENCE_NAME}"
@@ -30,11 +34,7 @@ conda activate queen
 echo "======================================================================"
 echo "Step 1: LiVoGS Compress + Decompress"
 echo "======================================================================"
-echo "  QUEEN root:   ${QUEEN_ROOT}"
-echo "  Model path:   ${gt_model_path}"
-echo "  Output:       ${output_folder}"
-echo "======================================================================"
-python "${QUEEN_ROOT}/compression/livogs/compress_decompress.py" \
+python scripts/livogs_baseline/compress_decompress_pipeline.py \
     --ply_path "${gt_model_path}" \
     --output_folder "${output_folder}" \
     --output_ply_folder "${output_folder}/decompressed_ply" \
@@ -50,7 +50,7 @@ echo ""
 echo "======================================================================"
 echo "Step 2: Evaluate Decompression Quality"
 echo "======================================================================"
-python "${QUEEN_ROOT}/compression/evaluate_decompress.py" \
+python scripts/evaluate_decompress.py \
     --config configs/dynerf.yaml \
     -s "${dataset_path}" \
     -m "${gt_model_path}" \

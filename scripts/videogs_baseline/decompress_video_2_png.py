@@ -1,12 +1,21 @@
 import os
 import csv
 import time
+import sys
 import shutil
 import argparse
 import json
-import subprocess
 from tqdm import tqdm
 
+# --- Setup sys.path for LiVoGS imports ---
+_THIS_DIR = os.path.dirname(os.path.abspath(__file__))
+_QUEEN_ROOT = os.path.dirname(os.path.dirname(_THIS_DIR))   
+_VIDEOGS_COMPRESSION = os.path.join(_QUEEN_ROOT, "VideoGS", "compression")
+
+if _VIDEOGS_COMPRESSION not in sys.path:
+    sys.path.insert(0, _VIDEOGS_COMPRESSION)
+
+from compress_decompress import decode_videogs_video
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Decompress H.264 MP4 videos back to PNG attribute images using ffmpeg")
@@ -41,14 +50,8 @@ if __name__ == "__main__":
 
         t0 = time.perf_counter()
         for ch in tqdm(channels, desc=f"Group {group_id} channels", leave=False):
-            cmd = [
-                "ffmpeg", "-y", "-loglevel", "error",
-                "-i", os.path.join(input_group_path, f"{ch}.mp4"),
-                "-pix_fmt", "gray",
-                "-start_number", str(frame_start),
-                os.path.join(output_group_path, f"%d_{ch}.png")
-            ]
-            subprocess.run(cmd, check=True)
+            decode_videogs_video(frame_start, ch, input_group_path, output_group_path)
+        
         t1 = time.perf_counter()
         benchmark_rows.append({
             "group_id": int(group_id),

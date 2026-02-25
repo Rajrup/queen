@@ -11,13 +11,15 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--input_folder", type=str, required=True,
                         help="Base folder for videogs_compression")
+    parser.add_argument("--dataset_name", type=str, required=True, help="Dataset name (e.g. Neural_3D_Video)")
+    parser.add_argument("--sequence_name", type=str, required=True, help="Sequence name (e.g. cook_spinach)")
     parser.add_argument("--qp", type=int, required=True, help="QP value (e.g. 22)")
     parser.add_argument("--output_folder", type=str, required=True, help="Output folder for plot PNG")
     args = parser.parse_args()
 
     qp_dir = os.path.join(args.input_folder, f"qp_{args.qp}")
     evaluation_csv = os.path.join(qp_dir, "evaluation", "evaluation_results.csv")
-    out_dir = os.path.join(args.output_folder, "plots", "videogs_compression", f"qp_{args.qp}")
+    out_dir = os.path.join(args.output_folder, "plots", args.dataset_name, args.sequence_name, f"qp_{args.qp}")
     out_path = os.path.join(out_dir, "quality.png")
     os.makedirs(out_dir, exist_ok=True)
 
@@ -46,7 +48,7 @@ def main():
     ax1.plot(x, gt_psnr, "o-", label="GT model", color="green", markersize=4)
     ax1.plot(x, decomp_psnr, "s-", label="Decompressed model", color="coral", markersize=4)
     ax1.set_ylabel("PSNR (dB)")
-    ax1.set_title(f"VideoGS quality per frame: GT vs Decompressed [QP={args.qp}]")
+    ax1.set_title(f"VideoGS quality per frame: GT vs Decompressed [QP={args.qp}, {args.dataset_name}, {args.sequence_name}]")
     avg_gt_p = sum(gt_psnr) / n
     avg_dec_p = sum(decomp_psnr) / n
     ax1.axhline(y=avg_gt_p, color="green", linestyle="--", alpha=0.4,

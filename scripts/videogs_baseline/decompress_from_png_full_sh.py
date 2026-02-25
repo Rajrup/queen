@@ -2,83 +2,20 @@ import os
 import csv
 import time
 import numpy as np
-import cv2
 import json
 import argparse
 import sys
 from tqdm import tqdm
 
-# Add project root to path to import modules
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# --- Setup sys.path for LiVoGS imports ---
+_THIS_DIR = os.path.dirname(os.path.abspath(__file__))
+_QUEEN_ROOT = os.path.dirname(os.path.dirname(_THIS_DIR))   
+_VIDEOGS_COMPRESSION = os.path.join(_QUEEN_ROOT, "VideoGS", "compression")
 
-def denormalize_uint8(data, min_val, max_val):
-    return data / 255.0 * (max_val - min_val) + min_val
+if _VIDEOGS_COMPRESSION not in sys.path:
+    sys.path.insert(0, _VIDEOGS_COMPRESSION)
 
-def denormalize_uint16(data, min_val, max_val):
-    return data / (2 ** 16 - 1) * (max_val - min_val) + min_val
-
-def decode_videogs_png(input_folder, frame, num_attributes):
-    images = {}
-    # Position (0-2) -> 2 images each (0-5)
-    # Attributes (3+) -> 1 image each (offset by 3)
-    
-    # Load position images
-    for i in range(6):
-        img_path = os.path.join(input_folder, f"{frame}_{i}.png")
-        if os.path.exists(img_path):
-            images[f"{i}"] = cv2.imread(img_path, cv2.IMREAD_UNCHANGED)
-            
-    # Load other attribute images
-    # We iterate until we fail to find an image, or based on expected count
-    # Since we don't know exact count easily without SH degree, we can try a large range
-    # or pass num_attributes if known.
-    # VideoGS maps attribute i (starting from 3) to i+3.
-    # Max attribute index for SH=3 is around 61. So 61+3 = 64.
-    
-    for i in range(6, num_attributes + 3):
-        img_path = os.path.join(input_folder, f"{frame}_{i}.png")
-        if os.path.exists(img_path):
-            images[f"{i}"] = cv2.imread(img_path, cv2.IMREAD_UNCHANGED)
-            
-    return images
-
-def dequantize_videogs_image(images, frame, min_max_info):
-    num_points = min_max_info[f'{frame}_num']
-    
-    # Determine number of attributes based on loaded images
-    # Max index in images keys
-    max_idx = max([int(k) for k in images.keys()])
-    num_attributes = max_idx - 2 # Since last index is num_attributes-1 + 3
-    
-    reconstructed_data = np.zeros((num_points, num_attributes), dtype=np.float32)
-    
-    # Dequantize Position (0, 1, 2)
-    for i in range(3):
-        if f"{2*i}" in images and f"{2*i+1}" in images:
-            image_even = images[f"{2*i}"].astype(np.uint16) # Low byte
-            image_odd = images[f"{2*i+1}"].astype(np.uint16) # High byte
-            
-            image = image_even + (image_odd << 8)
-            
-            min_val = float(min_max_info[f'{frame}_{i}_min'])
-            max_val = float(min_max_info[f'{frame}_{i}_max'])
-            
-            denorm = denormalize_uint16(image, min_val, max_val).flatten()[:num_points]
-            reconstructed_data[:, i] = denorm
-            
-    # Dequantize others (3 to num_attributes-1)
-    for i in range(3, num_attributes):
-        img_idx = i + 3
-        if f"{img_idx}" in images:
-            image = images[f"{img_idx}"].astype(np.float32)
-            
-            min_val = float(min_max_info[f'{frame}_{i}_min'])
-            max_val = float(min_max_info[f'{frame}_{i}_max'])
-            
-            denorm = denormalize_uint8(image, min_val, max_val).flatten()[:num_points]
-            reconstructed_data[:, i] = denorm
-            
-    return reconstructed_data
+from compress_decompress import decode_videogs_png, dequantize_videogs_image
 
 def save_ply(data, output_file, sh_degree):
     """Write a QUEEN-compatible PLY with vertex_id from a flat data matrix.

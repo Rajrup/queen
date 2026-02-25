@@ -31,8 +31,9 @@ from gaussian_renderer import render
 from scene import Scene
 from scene.gaussian_model import GaussianModel
 from utils.general_utils import safe_state
-from utils.image_utils import psnr as psnr_fn
-from utils.loss_utils import ssim as ssim_fn
+# from utils.image_utils import psnr as psnr_fn
+# from utils.loss_utils import ssim as ssim_fn
+from torchmetrics.image import PeakSignalNoiseRatio, StructuralSimilarityIndexMeasure
 from utils.loader_utils import MultiViewVideoDataset, SequentialMultiviewSampler
 from utils.camera_utils import updateCam
 from utils.compress_utils import search_for_max_iteration
@@ -66,8 +67,8 @@ def render_and_evaluate(gaussians, cameras, background, pipeline, psnr_metric, s
             image = torch.clamp(render_pkg["render"], 0.0, 1.0)
             gt_image = torch.clamp(cam.original_image[:3], 0.0, 1.0)
 
-            psnr_val = psnr_metric(image, gt_image).item()
-            ssim_val = ssim_metric(image, gt_image).item()
+            psnr_val = psnr_metric(image.unsqueeze(0), gt_image.unsqueeze(0)).item()
+            ssim_val = ssim_metric(image.unsqueeze(0), gt_image.unsqueeze(0)).item()
 
             metrics['psnr'].append(psnr_val)
             metrics['ssim'].append(ssim_val)
@@ -187,8 +188,11 @@ def evaluate_livogs_quality(dataset, opt, pipeline, qp, args):
     bg_color = [1, 1, 1] if dataset.white_background else [0, 0, 0]
     background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
 
-    psnr_metric = psnr_fn
-    ssim_metric = ssim_fn
+    # psnr_metric = psnr_fn
+    # ssim_metric = ssim_fn
+
+    psnr_metric = PeakSignalNoiseRatio(data_range=1.0).cuda()
+    ssim_metric = StructuralSimilarityIndexMeasure(data_range=1.0).cuda()
 
     gt_metrics_all = {'psnr': [], 'ssim': []}
     decomp_metrics_all = {'psnr': [], 'ssim': []}

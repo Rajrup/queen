@@ -265,3 +265,4 @@ submodules/simple-knn/build/
 *.egg-info/
 *.code-workspace
 .cursorignore
+pyrightconfig.json
