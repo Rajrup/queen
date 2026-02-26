@@ -16,3 +16,6 @@
 [submodule "VideoGS"]
 	path = VideoGS
 	url = https://github.com/Rajrup/VideoGS.git
+[submodule "MesonGS"]
+	path = MesonGS
+	url = https://github.com/Rajrup/MesonGS.git
