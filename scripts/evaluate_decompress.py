@@ -46,13 +46,24 @@ def find_ply_path(frame_dir):
     canonical = os.path.join(frame_dir, "point_cloud.ply")
     if os.path.exists(canonical):
         return canonical
+
     iter_dir = os.path.join(frame_dir, "point_cloud")
-    if os.path.exists(iter_dir):
-        max_iter = search_for_max_iteration(iter_dir)
-        per_iter = os.path.join(iter_dir, f"iteration_{max_iter}", "point_cloud.ply")
-        if os.path.exists(per_iter):
-            return per_iter
-    return None
+    if not os.path.isdir(iter_dir):
+        raise FileNotFoundError(f"Checkpoint folder not found: {iter_dir}")
+
+    max_iter = search_for_max_iteration(iter_dir)
+    if max_iter <= 0:
+        raise FileNotFoundError(
+            f"No valid iteration_<N> checkpoints found in: {iter_dir}"
+        )
+
+    per_iter = os.path.join(iter_dir, f"iteration_{max_iter}", "point_cloud.ply")
+    if os.path.exists(per_iter):
+        return per_iter
+
+    raise FileNotFoundError(
+        f"Missing checkpoint PLY for max iteration {max_iter}: {per_iter}"
+    )
 
 
 def render_and_evaluate(gaussians, cameras, background, pipeline, psnr_metric, ssim_metric,
@@ -224,16 +235,10 @@ def evaluate_livogs_quality(dataset, opt, pipeline, qp, args):
         # GT PLY
         gt_frame_dir = os.path.join(args.model_path, 'frames', frame)
         gt_ply_file = find_ply_path(gt_frame_dir)
-        if gt_ply_file is None:
-            print(f"Warning: GT PLY not found: {gt_frame_dir}, skipping frame {frame}")
-            continue
 
         # Decompressed PLY
         decomp_frame_dir = os.path.join(args.decompressed_ply_path, 'frames', frame)
         decomp_ply_file = find_ply_path(decomp_frame_dir)
-        if decomp_ply_file is None:
-            print(f"Warning: Decompressed PLY not found: {decomp_frame_dir}, skipping frame {frame}")
-            continue
 
         # Evaluate GT model
         gt_gaussians.frame_idx = frame_idx
@@ -282,7 +287,12 @@ def evaluate_livogs_quality(dataset, opt, pipeline, qp, args):
               f"Decomp SSIM={decomp_metrics['ssim']:.4f}")
 
         if args.save_renders:
-            gt_images = [torch.clamp(cam.original_image[:3], 0.0, 1.0) for cam in cameras]
+            gt_images = []
+            for cam in cameras:
+                if cam.original_image is None:
+                    raise ValueError("Camera original_image is None during evaluation.")
+                original_image = cam.original_image
+                gt_images.append(torch.clamp(original_image[:3], 0.0, 1.0))
             save_images(gt_images, os.path.join(args.output_render_path, "gt_images"),
                         frame, "gt_image")
             save_images(gt_renders, os.path.join(args.output_render_path, "gt_model_renders"),

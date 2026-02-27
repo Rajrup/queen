@@ -32,10 +32,14 @@ cd ../../../
 
 ## Compression
 
-### Run LiVoGS Compression on HiFi4G Dataset
+### Run LiVoGS Compression on DyNeRF Dataset
 
 ```bash
-bash scripts/livogs_baseline/evaluate_livogs_compression.sh
+# Full RD-curve sweep (multi-QP, multi-GPU)
+python scripts/livogs_baseline/run_rd_pipeline.py
+
+# Single experiment
+python scripts/livogs_baseline/worker.py --dataset_name Neural_3D_Video --sequence_name cook_spinach
 ```
 
 ### Generate plots for HiFi4G Dataset
