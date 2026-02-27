@@ -12,11 +12,11 @@ from typing import Optional, TypedDict
 from numpy import arange
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import config
-from config import SequenceCfg
+from rd_pipeline import config
+from rd_pipeline.config import SequenceCfg
 
-import qp as _qp
-import plot as _plot
+from rd_pipeline import qp as _qp
+from rd_pipeline import plot as _plot
 
 
 DATA_PATH = config.DATA_PATH

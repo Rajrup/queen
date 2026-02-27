@@ -39,7 +39,7 @@ cd ../../../
 python scripts/livogs_baseline/run_rd_pipeline.py
 
 # Single experiment
-python scripts/livogs_baseline/worker.py --dataset_name Neural_3D_Video --sequence_name cook_spinach
+python scripts/livogs_baseline/rd_pipeline/worker.py --dataset_name Neural_3D_Video --sequence_name cook_spinach
 ```
 
 ### Generate plots for HiFi4G Dataset

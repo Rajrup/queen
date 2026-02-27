@@ -6,9 +6,9 @@ import sys
 from typing import TypedDict
 
 THIS_DIR = os.path.dirname(os.path.abspath(__file__))
-QUEEN_ROOT = os.path.dirname(os.path.dirname(THIS_DIR))
+QUEEN_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(THIS_DIR)))
 LIVOGS_COMPRESSION = os.path.join(QUEEN_ROOT, "LiVoGS", "compression")
-SCRIPTS_DIR = os.path.dirname(THIS_DIR)  # scripts/
+SCRIPTS_DIR = os.path.dirname(os.path.dirname(THIS_DIR))  # scripts/
 
 
 def setup_livogs_imports() -> None:
@@ -35,7 +35,7 @@ BASELINE_QUANTIZE_STEP: dict[str, float] = {
     "opacity": 0.0001,
 }
 
-QP_CONFIGS_ROOT = os.path.abspath(os.path.join(THIS_DIR, "../../results/rd_qp_configs"))
+QP_CONFIGS_ROOT = os.path.join(QUEEN_ROOT, "results", "rd_qp_configs")
 
 
 class SequenceCfg(TypedDict):
