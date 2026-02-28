@@ -268,3 +268,8 @@ submodules/simple-knn/build/
 *.code-workspace
 .cursorignore
 pyrightconfig.json
+
+scripts/dracogs_baseline/plots/plots
+scripts/videogs_baseline/plots/plots
+scripts/livogs_baseline/plots/plots
+scripts/mesongs_baseline/plots/plots
