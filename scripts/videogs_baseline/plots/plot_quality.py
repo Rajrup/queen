@@ -1,25 +1,42 @@
 """
 Plot GT vs decompressed model quality per frame (PSNR and SSIM).
-Requires: evaluation_results.csv under input_folder/qp_<qp>/evaluation/
+Requires: evaluation_results.csv under input_folder/<output_tag>/evaluation/
 """
 import os
 import argparse
 import csv
 import matplotlib.pyplot as plt
 
+
+def add_qp_args(parser):
+    parser.add_argument("--qp", type=int, default=22)
+    parser.add_argument("--qfd", type=int, default=22)
+    parser.add_argument("--qfr1", type=int, default=22)
+    parser.add_argument("--qfr2", type=int, default=22)
+    parser.add_argument("--qo", type=int, default=22)
+    parser.add_argument("--qs", type=int, default=22)
+    parser.add_argument("--qr", type=int, default=22)
+
+
+def build_output_tag(args):
+    return (f"qp_{args.qp}_qfd_{args.qfd}_qfr1_{args.qfr1}_qfr2_{args.qfr2}"
+            f"_qo_{args.qo}_qs_{args.qs}_qr_{args.qr}")
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--input_folder", type=str, required=True,
                         help="Base folder for videogs_compression")
-    parser.add_argument("--dataset_name", type=str, required=True, help="Dataset name (e.g. Neural_3D_Video)")
-    parser.add_argument("--sequence_name", type=str, required=True, help="Sequence name (e.g. cook_spinach)")
-    parser.add_argument("--qp", type=int, required=True, help="QP value (e.g. 22)")
+    parser.add_argument("--dataset_name", type=str, required=True)
+    parser.add_argument("--sequence_name", type=str, required=True)
+    add_qp_args(parser)
     parser.add_argument("--output_folder", type=str, required=True, help="Output folder for plot PNG")
     args = parser.parse_args()
 
-    qp_dir = os.path.join(args.input_folder, f"qp_{args.qp}")
-    evaluation_csv = os.path.join(qp_dir, "evaluation", "evaluation_results.csv")
-    out_dir = os.path.join(args.output_folder, "plots", args.dataset_name, args.sequence_name, f"qp_{args.qp}")
+    output_tag = build_output_tag(args)
+    config_dir = os.path.join(args.input_folder, output_tag)
+    evaluation_csv = os.path.join(config_dir, "evaluation", "evaluation_results.csv")
+    out_dir = os.path.join(args.output_folder, "plots", args.dataset_name, args.sequence_name, output_tag)
     out_path = os.path.join(out_dir, "quality.png")
     os.makedirs(out_dir, exist_ok=True)
 
@@ -48,7 +65,7 @@ def main():
     ax1.plot(x, gt_psnr, "o-", label="GT model", color="green", markersize=4)
     ax1.plot(x, decomp_psnr, "s-", label="Decompressed model", color="coral", markersize=4)
     ax1.set_ylabel("PSNR (dB)")
-    ax1.set_title(f"VideoGS quality per frame: GT vs Decompressed [QP={args.qp}, {args.dataset_name}, {args.sequence_name}]")
+    ax1.set_title(f"VideoGS quality per frame: GT vs Decompressed [{output_tag}]\n{args.dataset_name}/{args.sequence_name}")
     avg_gt_p = sum(gt_psnr) / n
     avg_dec_p = sum(decomp_psnr) / n
     ax1.axhline(y=avg_gt_p, color="green", linestyle="--", alpha=0.4,
@@ -79,6 +96,7 @@ def main():
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
     fig.savefig(out_path, dpi=150)
     print(f"Saved: {out_path}")
+
 
 if __name__ == "__main__":
     main()
