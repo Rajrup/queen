@@ -78,6 +78,8 @@ RUN_PLOT = True
 
 EXPERIMENT_BETA_VALUES = [0.0]
 EXPERIMENT_BASELINE_QPS = [v / 255.0 for v in [0.01, 0.1, 0.5, 1, 2, 4, 8, 16]]
+# Stage-2 evaluates this depth list. Plot aggregation may use only a subset
+# selected from PLOTS (see _depths_needed_for_plotting).
 EXPERIMENT_DEPTHS = [12, 13, 14, 15, 16, 17, 18]
 EXPERIMENT_QP_QUATS: list[float] = [0.0001, 0.001, 0.01, 0.1]
 EXPERIMENT_QP_SCALES: list[float] = [0.0001, 0.001, 0.01, 0.1]
@@ -85,6 +87,17 @@ EXPERIMENT_QP_OPACITY: list[float] = [0.0001, 0.001, 0.01, 0.1]
 
 PLOT_PSNR_RANGE: Optional[tuple[float, float]] = None
 
+# Plot specs drive two things:
+# 1) Plot filtering in stage_plot:
+#    - "curve_var" is the sweep variable for separate RD curves.
+#    - "fixed" contains exact-match filters applied before plotting.
+# 2) Aggregation scope in main():
+#    - If curve_var == "depth", aggregate all EXPERIMENT_DEPTHS.
+#    - Otherwise, if fixed contains "depth", aggregate only that depth.
+#    - If fixed omits "depth", aggregate all EXPERIMENT_DEPTHS.
+#
+# Important: any knob not fixed in a spec can still vary in that plot. For
+# example, omitting baseline_qp means all available baseline_qp rows are kept.
 PLOTS: list[dict[str, Any]] = [
     {
         "curve_var": "qp_opacity",
@@ -576,13 +589,83 @@ def stage_evaluate(seq: SequenceCfg, frame_id: int, depths: list[int]) -> list[s
     return failed
 
 
-def stage_aggregate(seq: SequenceCfg, frame_id: int, depths: list[int]) -> str:
+def _normalize_plot_fixed_filters(
+    plot_specs: list[dict[str, Any]],
+) -> Optional[list[dict[str, float]]]:
+    normalized: list[dict[str, float]] = []
+
+    for idx, spec in enumerate(plot_specs):
+        fixed = spec.get("fixed", {})
+        if not isinstance(fixed, dict):
+            continue
+        if any(key not in config.KNOB_NAMES for key in fixed.keys()):
+            continue
+
+        normalized_fixed: dict[str, float] = {}
+        for key, raw_value in fixed.items():
+            try:
+                normalized_fixed[key] = round(float(raw_value), 6)
+            except (TypeError, ValueError):
+                print(
+                    f"[WARN] Plot spec #{idx} has non-numeric fixed value for '{key}': "
+                    f"{raw_value!r}. Skipping aggregation prefilter."
+                )
+                return None
+        normalized.append(normalized_fixed)
+
+    return normalized
+
+
+def _row_matches_fixed_constraints(row: dict[str, Any], fixed: dict[str, float]) -> bool:
+    for key, target_value in fixed.items():
+        row_value = row.get(key)
+        if row_value is None:
+            return False
+        try:
+            if round(float(row_value), 6) != target_value:
+                return False
+        except (TypeError, ValueError):
+            return False
+    return True
+
+
+def _filter_aggregate_rows_for_plots(
+    rows: list[dict[str, Any]],
+    plot_specs: Optional[list[dict[str, Any]]],
+) -> list[dict[str, Any]]:
+    if not rows or not plot_specs:
+        return rows
+
+    normalized_fixed_filters = _normalize_plot_fixed_filters(plot_specs)
+    if normalized_fixed_filters is None:
+        return rows
+    if not normalized_fixed_filters:
+        return rows
+
+    return [
+        row
+        for row in rows
+        if any(_row_matches_fixed_constraints(row, fixed) for fixed in normalized_fixed_filters)
+    ]
+
+
+def stage_aggregate(
+    seq: SequenceCfg,
+    frame_id: int,
+    depths: list[int],
+    plot_specs: Optional[list[dict[str, Any]]] = None,
+) -> str:
     output_root = config.rd_output_root(DATA_PATH, seq["dataset_name"], seq["sequence_name"])
     all_rows: list[dict[str, Any]] = []
     for depth in depths:
         frame_dir = os.path.join(output_root, f"frame_{frame_id}", f"J_{depth}")
         depth_results = _plot.collect_results(frame_dir, frame_id, depth=depth)
         all_rows.extend(depth_results)
+
+    collected_count = len(all_rows)
+    all_rows = _filter_aggregate_rows_for_plots(all_rows, plot_specs)
+    filtered_count = len(all_rows)
+
     csv_path = config.all_results_csv(DATA_PATH, seq["dataset_name"], seq["sequence_name"], frame_id)
     os.makedirs(os.path.dirname(csv_path), exist_ok=True)
     fieldnames = [
@@ -594,8 +677,63 @@ def stage_aggregate(seq: SequenceCfg, frame_id: int, depths: list[int]) -> str:
         writer.writeheader()
         for row in all_rows:
             writer.writerow({name: row.get(name, "") for name in fieldnames})
-    print(f"[INFO] Aggregated {len(all_rows)} rows into: {csv_path}")
+    if plot_specs:
+        print(
+            f"[INFO] Aggregated {filtered_count}/{collected_count} rows "
+            f"after applying plot fixed-filter union into: {csv_path}"
+        )
+    else:
+        print(f"[INFO] Aggregated {filtered_count} rows into: {csv_path}")
     return csv_path
+
+
+def _depths_needed_for_plotting(
+    plot_specs: list[dict[str, Any]],
+    experiment_depths: list[int],
+) -> list[int]:
+    """Return the minimal depth set required to satisfy all plot specs."""
+    base_depths: list[int] = []
+    base_seen: set[int] = set()
+    for raw_depth in experiment_depths:
+        depth = int(raw_depth)
+        if depth in base_seen:
+            continue
+        base_seen.add(depth)
+        base_depths.append(depth)
+
+    needs_all_depths = False
+    requested_depths: list[int] = []
+    requested_seen: set[int] = set()
+
+    for spec in plot_specs:
+        curve_var = spec.get("curve_var")
+        fixed = spec.get("fixed", {})
+
+        if curve_var == "depth":
+            needs_all_depths = True
+            continue
+
+        if not isinstance(fixed, dict) or "depth" not in fixed:
+            continue
+
+        try:
+            depth = int(fixed["depth"])
+        except (TypeError, ValueError):
+            continue
+
+        if depth in requested_seen:
+            continue
+        requested_seen.add(depth)
+        requested_depths.append(depth)
+
+    if needs_all_depths or not requested_depths:
+        return base_depths
+
+    selected = [depth for depth in base_depths if depth in requested_seen]
+    for depth in requested_depths:
+        if depth not in base_seen:
+            selected.append(depth)
+    return selected
 
 
 def stage_plot(seq: SequenceCfg, frame_id: int, plot_spec: dict[str, Any]) -> None:
@@ -651,6 +789,8 @@ def main() -> None:
         f"opacity={EXPERIMENT_QP_OPACITY}"
     )
     print(f"  Plotting:   specs={PLOTS} psnr_range={PLOT_PSNR_RANGE}")
+    plot_aggregate_depths = _depths_needed_for_plotting(PLOTS, EXPERIMENT_DEPTHS)
+    print(f"  Plotting:   aggregate_depths={plot_aggregate_depths}")
     print(sep)
 
     if RUN_EVALUATE:
@@ -672,7 +812,7 @@ def main() -> None:
                     all_failures += [f"{seq['sequence_name']}/frame_{frame_id}/{f}" for f in failed]
 
             if RUN_PLOT and not STAGE2_DISABLE_IMAGE_AND_PLY_SAVING:
-                stage_aggregate(seq, frame_id, EXPERIMENT_DEPTHS)
+                stage_aggregate(seq, frame_id, plot_aggregate_depths, plot_specs=PLOTS)
                 for plot_spec in PLOTS:
                     stage_plot(seq, frame_id, plot_spec=plot_spec)
             elif RUN_PLOT and STAGE2_DISABLE_IMAGE_AND_PLY_SAVING:
