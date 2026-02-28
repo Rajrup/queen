@@ -149,7 +149,6 @@ def compress_decompress(
     sh_color_space: str = config.SH_COLOR_SPACE,
     rlgr_block_size: int = config.RLGR_BLOCK_SIZE,
     device: str = config.DEVICE,
-    color_rescale: bool = True,
     skip_save_ply: bool = False,
 ) -> list[dict[str, Any]]:
     """Run LiVoGS compress + decompress for an inclusive QUEEN frame range."""
@@ -188,7 +187,6 @@ def compress_decompress(
         f"sh_rest={quantize_step['sh_rest']}"
     )
     print(f"  SH color space:     {sh_color_space}")
-    print(f"  Color rescale:      {color_rescale}")
     print(f"  RLGR block size:    {rlgr_block_size}")
     print("=" * 70)
 
@@ -206,7 +204,6 @@ def compress_decompress(
         device=device,
         device_id=device_id,
         sh_color_space=sh_color_space,
-        color_rescale=color_rescale,
         quantize_step=quantize_step,
         rlgr_block_size=rlgr_block_size,
     )
@@ -232,7 +229,6 @@ def compress_decompress(
             device=device,
             device_id=device_id,
             sh_color_space=sh_color_space,
-            color_rescale=color_rescale,
             quantize_step=quantize_step,
             rlgr_block_size=rlgr_block_size,
         )
@@ -316,7 +312,6 @@ def compress_decompress(
             "J": J,
             "quantize_step": quantize_step,
             "sh_color_space": sh_color_space,
-            "color_rescale": color_rescale,
             "rlgr_block_size": rlgr_block_size,
             "sh_degree": sh_degree,
             "frame_start": frame_start,
@@ -395,8 +390,6 @@ if __name__ == "__main__":
     parser.add_argument("--quantize_step_sh_rest", type=float, default=None)
     parser.add_argument("--sh_color_space", type=str, default=config.SH_COLOR_SPACE,
                         choices=["rgb", "yuv", "klt"])
-    parser.add_argument("--color_rescale", action="store_true", default=True)
-    parser.add_argument("--no_color_rescale", action="store_true")
     parser.add_argument("--rlgr_block_size", type=int, default=config.RLGR_BLOCK_SIZE)
     parser.add_argument("--quantize_config_json", type=str, default=None,
                         help="Path to JSON with full quantize_config (overrides --quantize_step_*)")
@@ -404,9 +397,6 @@ if __name__ == "__main__":
     parser.add_argument("--skip_save_ply", action="store_true",
                         help="Skip saving decompressed PLY files (fast mode)")
     cli_args = parser.parse_args()
-
-    if cli_args.no_color_rescale:
-        cli_args.color_rescale = False
 
     if cli_args.quantize_config_json is not None:
         with open(cli_args.quantize_config_json, encoding="utf-8") as f:
@@ -439,6 +429,5 @@ if __name__ == "__main__":
         sh_color_space=cli_args.sh_color_space,
         rlgr_block_size=cli_args.rlgr_block_size,
         device=cli_args.device,
-        color_rescale=cli_args.color_rescale,
         skip_save_ply=cli_args.skip_save_ply,
     )

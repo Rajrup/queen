@@ -7,15 +7,18 @@ import os
 import sys
 from typing import Any, Optional
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import config
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+QUEEN_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(SCRIPT_DIR)))
+if QUEEN_ROOT not in sys.path:
+    sys.path.insert(0, QUEEN_ROOT)
+from scripts.livogs_baseline.rd_pipeline import config
 
 config.setup_livogs_imports()
 
 import numpy as np
 import torch
 
-import codec
+from scripts.livogs_baseline.rd_pipeline import codec
 from color_space_transforms import normalize_attributes, rgb_to_klt3
 from gpu_octree_codec import calc_morton
 from merge_cluster_cuda import merge_gaussian_clusters_with_indices
@@ -112,9 +115,20 @@ def generate_qp_sets(
     return qp_sets
 
 
-def create_quantize_config(sh_values: list[float]) -> dict[str, Any]:
+def create_quantize_config(
+    sh_values: list[float],
+    qp_quats: Optional[float] = None,
+    qp_scales: Optional[float] = None,
+    qp_opacity: Optional[float] = None,
+) -> dict[str, Any]:
     """Build quantize_config from SH QPs (27 entries for SH degree 2: 3 DC + 24 rest)."""
     quantize_cfg: dict[str, Any] = dict(config.BASELINE_QUANTIZE_STEP)
+    if qp_quats is not None:
+        quantize_cfg["quats"] = qp_quats
+    if qp_scales is not None:
+        quantize_cfg["scales"] = qp_scales
+    if qp_opacity is not None:
+        quantize_cfg["opacity"] = qp_opacity
     if isinstance(sh_values, (list, tuple)) and len(sh_values) > 3:
         quantize_cfg["sh_dc"] = list(sh_values[:3])
         quantize_cfg["sh_rest"] = list(sh_values[3:])
@@ -134,6 +148,9 @@ def generate(
     j: int = config.J,
     device: str = config.DEVICE,
     selected_qp_dir_names: Optional[list[str]] = None,
+    qp_quats_list: Optional[list[float]] = None,
+    qp_scales_list: Optional[list[float]] = None,
+    qp_opacity_list: Optional[list[float]] = None,
 ) -> None:
     """Generate QP config JSONs for selected sequences and frames."""
     output_root = os.path.abspath(output_root)
@@ -175,25 +192,41 @@ def generate(
 
             qp_sets = generate_qp_sets(rms, rms_max, baseline_qps, beta_values)
 
+            _qp_quats = qp_quats_list or [config.BASELINE_QUANTIZE_STEP["quats"]]
+            _qp_scales = qp_scales_list or [config.BASELINE_QUANTIZE_STEP["scales"]]
+            _qp_opacity = qp_opacity_list or [config.BASELINE_QUANTIZE_STEP["opacity"]]
             out_dir = config.qp_json_output_dir(output_root, qp_dir_name, frame_id)
             os.makedirs(out_dir, exist_ok=True)
 
+            total_configs = len(qp_sets) * len(_qp_quats) * len(_qp_scales) * len(_qp_opacity)
             for qp_set in qp_sets:
-                quantize_cfg = create_quantize_config(qp_set["values"])
-                payload = {
-                    "label": qp_set["label"],
-                    "baseline_qp": qp_set["baseline_qp"],
-                    "beta": qp_set["beta"],
-                    "frame_id": frame_id,
-                    "sequence_name": qp_dir_name,
-                    "octree_depth": j,
-                    "quantize_config": quantize_cfg,
-                }
-                out_path = os.path.join(out_dir, f"qp_{qp_set['label']}.json")
-                with open(out_path, "w", encoding="utf-8") as f:
-                    json.dump(payload, f, indent=2)
+                for qp_quats in _qp_quats:
+                    for qp_scales in _qp_scales:
+                        for qp_opacity in _qp_opacity:
+                            quantize_cfg = create_quantize_config(
+                                qp_set["values"],
+                                qp_quats=qp_quats,
+                                qp_scales=qp_scales,
+                                qp_opacity=qp_opacity,
+                            )
+                            label = f"qp{qp_set['baseline_qp']}_b{qp_set['beta']:.1f}_q{qp_quats}_s{qp_scales}_o{qp_opacity}"
+                            payload = {
+                                "label": label,
+                                "baseline_qp": qp_set["baseline_qp"],
+                                "beta": qp_set["beta"],
+                                "qp_quats": qp_quats,
+                                "qp_scales": qp_scales,
+                                "qp_opacity": qp_opacity,
+                                "frame_id": frame_id,
+                                "sequence_name": qp_dir_name,
+                                "octree_depth": j,
+                                "quantize_config": quantize_cfg,
+                            }
+                            out_path = os.path.join(out_dir, f"qp_{label}.json")
+                            with open(out_path, "w", encoding="utf-8") as f:
+                                json.dump(payload, f, indent=2)
 
-            print(f"  Saved {len(qp_sets)} QP configs -> {out_dir}")
+            print(f"  Saved {total_configs} QP configs -> {out_dir}")
             torch.cuda.empty_cache()
 
     print(f"\n{'=' * 70}")
@@ -253,6 +286,12 @@ if __name__ == "__main__":
                         help="Override frame IDs (space-separated ints)")
     parser.add_argument("--qp_dir_names", nargs="+", default=None,
                         help="Subset of qp_dir_name values to generate")
+    parser.add_argument("--qp_quats", nargs="+", type=float, default=None,
+                        help="Override quat quantization step sweep")
+    parser.add_argument("--qp_scales", nargs="+", type=float, default=None,
+                        help="Override scale quantization step sweep")
+    parser.add_argument("--qp_opacity", nargs="+", type=float, default=None,
+                        help="Override opacity quantization step sweep")
     args = parser.parse_args()
 
     generate(
@@ -262,4 +301,7 @@ if __name__ == "__main__":
         beta_values=args.beta_values or _STANDALONE_BETA_VALUES,
         output_root=args.output_dir or config.QP_CONFIGS_ROOT,
         selected_qp_dir_names=args.qp_dir_names,
+        qp_quats_list=args.qp_quats,
+        qp_scales_list=args.qp_scales,
+        qp_opacity_list=args.qp_opacity,
     )
