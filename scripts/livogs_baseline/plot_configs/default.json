@@ -5,7 +5,7 @@
             {
                 "curve_var": "qp_opacity",
                 "fixed": {
-                    "depth": 13,
+                    "depth": 15,
                     "beta": 0.0,
                     "qp_quats": 0.0001,
                     "qp_scales": 0.0001
@@ -19,7 +19,7 @@
             {
                 "curve_var": "qp_quats",
                 "fixed": {
-                    "depth": 13,
+                    "depth": 15,
                     "beta": 0.0,
                     "qp_scales": 0.0001,
                     "qp_opacity": 0.0001
@@ -33,7 +33,7 @@
             {
                 "curve_var": "qp_scales",
                 "fixed": {
-                    "depth": 13,
+                    "depth": 15,
                     "beta": 0.0,
                     "qp_quats": 0.0001,
                     "qp_opacity": 0.0001

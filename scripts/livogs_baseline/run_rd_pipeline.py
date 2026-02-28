@@ -44,11 +44,11 @@ SEQUENCES: list[SequenceCfg] = [
     #     "sequence_name": "cut_roasted_beef",
     #     "qp_dir_name": "DyNeRF_cut_roasted_beef",
     # },
-    {
-        "dataset_name": "Neural_3D_Video",
-        "sequence_name": "flame_salmon_1",
-        "qp_dir_name": "DyNeRF_flame_salmon_1",
-    },
+    # {
+    #     "dataset_name": "Neural_3D_Video",
+    #     "sequence_name": "flame_salmon_1",
+    #     "qp_dir_name": "DyNeRF_flame_salmon_1",
+    # },
     # {
     #     "dataset_name": "Neural_3D_Video",
     #     "sequence_name": "flame_steak",
@@ -71,15 +71,15 @@ DEVICE = config.DEVICE
 STAGE2_GPUS = [0, 1]
 STAGE2_WORKERS_PER_GPU = 3
 STAGE2_DISABLE_IMAGE_AND_PLY_SAVING = True
-SKIP_SAVED_EXPERIEMNTS = True
-RUN_EVALUATE = False
+SKIP_SAVED_EXPERIEMNTS = False
+RUN_EVALUATE = True
 RUN_PLOT = True
 
 EXPERIMENT_BETA_VALUES = [0.0]
 EXPERIMENT_BASELINE_QPS = [v / 255.0 for v in [0.01, 0.1, 0.5, 1, 2, 4, 8, 16]]
 # Stage-2 evaluates this depth list. Plot aggregation may use only a subset
 # selected from PLOTS (see _depths_needed_for_plotting).
-EXPERIMENT_DEPTHS = [12, 13, 14, 15, 16, 17, 18]
+EXPERIMENT_DEPTHS = [13, 14, 15, 16, 17]
 EXPERIMENT_QP_QUATS: list[float] = [0.0001, 0.001, 0.01, 0.1]
 EXPERIMENT_QP_SCALES: list[float] = [0.0001, 0.001, 0.01, 0.1]
 EXPERIMENT_QP_OPACITY: list[float] = [0.0001, 0.001, 0.01, 0.1]
