@@ -19,3 +19,6 @@
 [submodule "MesonGS"]
 	path = MesonGS
 	url = https://github.com/Rajrup/MesonGS.git
+[submodule "DracoGS"]
+	path = DracoGS
+	url = https://github.com/Rajrup/DracoGS.git
