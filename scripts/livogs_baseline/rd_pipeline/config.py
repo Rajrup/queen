@@ -18,7 +18,7 @@ def setup_livogs_imports() -> None:
     sys.path.insert(0, QUEEN_ROOT)
     if LIVOGS_COMPRESSION in sys.path:
         sys.path.remove(LIVOGS_COMPRESSION)
-    sys.path.append(LIVOGS_COMPRESSION)
+    sys.path.insert(0, LIVOGS_COMPRESSION)
 
 
 DATA_PATH = "/synology/rajrup/Queen"
@@ -115,3 +115,13 @@ def qp_json_pattern(qp_configs_root: str, qp_dir_name: str, frame_id: int) -> st
 def qp_json_output_dir(qp_configs_root: str, qp_dir_name: str, frame_id: int) -> str:
     """Directory for QP config JSONs: {root}/{qp_dir}/frame_{id}/"""
     return os.path.join(qp_configs_root, qp_dir_name, f"frame_{frame_id}")
+
+
+def all_results_csv(data_path: str, dataset_name: str, sequence_name: str, frame_id: int) -> str:
+    return os.path.join(
+        rd_output_root(data_path, dataset_name, sequence_name),
+        f"frame_{frame_id}", "all_results.csv",
+    )
+
+
+KNOB_NAMES = frozenset({"depth", "baseline_qp", "beta", "qp_quats", "qp_scales", "qp_opacity"})

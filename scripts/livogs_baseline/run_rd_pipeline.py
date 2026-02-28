@@ -1,22 +1,27 @@
 #!/usr/bin/env python3
+# pyright: reportMissingImports=false, reportMissingTypeStubs=false, reportUnknownVariableType=false, reportUnknownParameterType=false, reportMissingParameterType=false, reportUnknownArgumentType=false, reportUnknownMemberType=false, reportUnknownLambdaType=false, reportAttributeAccessIssue=false, reportArgumentType=false, reportCallIssue=false
 """High-level orchestrator for the LiVoGS per-frame RD experiment pipeline (QUEEN)."""
 
+import csv
 import glob
 import json
 import os
 import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Optional, TypedDict
+from typing import Any, Optional, TypedDict
 
 from numpy import arange
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from rd_pipeline import config
-from rd_pipeline.config import SequenceCfg
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+QUEEN_ROOT = os.path.dirname(os.path.dirname(SCRIPT_DIR))
+if QUEEN_ROOT not in sys.path:
+    sys.path.insert(0, QUEEN_ROOT)
+from scripts.livogs_baseline.rd_pipeline import config
+from scripts.livogs_baseline.rd_pipeline.config import SequenceCfg
 
-from rd_pipeline import qp as _qp
-from rd_pipeline import plot as _plot
+from scripts.livogs_baseline.rd_pipeline import qp as _qp
+from scripts.livogs_baseline.rd_pipeline import plot as _plot
 
 
 DATA_PATH = config.DATA_PATH
@@ -63,23 +68,46 @@ SH_COLOR_SPACE = config.SH_COLOR_SPACE
 RLGR_BLOCK_SIZE = config.RLGR_BLOCK_SIZE
 DEVICE = config.DEVICE
 
-STAGE2_GPUS = [0, 2, 3]
-STAGE2_WORKERS_PER_GPU = 1
-STAGE2_DISABLE_IMAGE_AND_PLY_SAVING = False
-SKIP_SAVED_EXPERIEMNTS = False
-
+STAGE2_GPUS = [0, 1]
+STAGE2_WORKERS_PER_GPU = 3
+STAGE2_DISABLE_IMAGE_AND_PLY_SAVING = True
+SKIP_SAVED_EXPERIEMNTS = True
 RUN_EVALUATE = True
-RUN_PLOT = True
+RUN_PLOT = False
 
 EXPERIMENT_BETA_VALUES = [0.0]
-EXPERIMENT_BASELINE_QPS = [0.01, 0.1, 0.5] + list(arange(1, 11, 0.5))
-EXPERIMENT_DEPTHS = [10, 12, 15, 18]
+EXPERIMENT_BASELINE_QPS = [v / 255.0 for v in [0.01, 0.1, 0.5, 1, 2, 4, 8, 16]]
+# Stage-2 evaluates this depth list. Plot aggregation may use only a subset
+# selected from PLOTS (see _depths_needed_for_plotting).
+EXPERIMENT_DEPTHS = [12, 13, 14, 15, 16, 17, 18]
+EXPERIMENT_QP_QUATS: list[float] = [0.0001, 0.001, 0.01, 0.1]
+EXPERIMENT_QP_SCALES: list[float] = [0.0001, 0.001, 0.01, 0.1]
+EXPERIMENT_QP_OPACITY: list[float] = [0.0001, 0.001, 0.01, 0.1]
 
-PLOT_BETA_VALUES = [0.0]
-PLOT_BASELINE_QPS = list(EXPERIMENT_BASELINE_QPS)
-PLOT_DEPTHS = list(EXPERIMENT_DEPTHS)
-PLOT_MODES = ["depth_under_beta"]
 PLOT_PSNR_RANGE: Optional[tuple[float, float]] = None
+
+# Plot specs drive two things:
+# 1) Plot filtering in stage_plot:
+#    - "curve_var" is the sweep variable for separate RD curves.
+#    - "fixed" contains exact-match filters applied before plotting.
+# 2) Aggregation scope in main():
+#    - If curve_var == "depth", aggregate all EXPERIMENT_DEPTHS.
+#    - Otherwise, if fixed contains "depth", aggregate only that depth.
+#    - If fixed omits "depth", aggregate all EXPERIMENT_DEPTHS.
+#
+# Important: any knob not fixed in a spec can still vary in that plot. For
+# example, omitting baseline_qp means all available baseline_qp rows are kept.
+PLOTS: list[dict[str, Any]] = [
+    {
+        "curve_var": "qp_opacity",
+        "fixed": {
+            "beta": 0.0,
+            "qp_quats": 0.00005,
+            "qp_scales": 0.0001,
+            "qp_opacity": 0.0001,
+        },
+    },
+]
 
 QP_CONFIGS_ROOT = config.QP_CONFIGS_ROOT
 
@@ -121,14 +149,33 @@ def _normalize_float_set(values: Optional[list[float]]) -> Optional[set[float]]:
     return {round(float(v), 6) for v in values}
 
 
-def _expected_qp_pairs(baseline_qps: list[float], betas: list[float]) -> set[tuple[float, float]]:
+ConfigKey = tuple[float, float, float, float, float]
+
+
+def _expected_config_keys(
+    baseline_qps: list[float],
+    betas: list[float],
+    qp_quats_list: list[float],
+    qp_scales_list: list[float],
+    qp_opacity_list: list[float],
+) -> set[ConfigKey]:
     qp_set = _normalize_float_set(baseline_qps) or set()
     beta_set = _normalize_float_set(betas) or set()
-    return {(qp, beta) for qp in qp_set for beta in beta_set}
+    quats_set = _normalize_float_set(qp_quats_list) or set()
+    scales_set = _normalize_float_set(qp_scales_list) or set()
+    opacity_set = _normalize_float_set(qp_opacity_list) or set()
+    return {
+        (qp, beta, q, s, o)
+        for qp in qp_set
+        for beta in beta_set
+        for q in quats_set
+        for s in scales_set
+        for o in opacity_set
+    }
 
 
-def _existing_qp_pairs(json_files: list[str]) -> tuple[set[tuple[float, float]], int]:
-    pairs: set[tuple[float, float]] = set()
+def _existing_config_keys(json_files: list[str]) -> tuple[set[ConfigKey], int]:
+    keys: set[ConfigKey] = set()
     invalid = 0
     for json_path in json_files:
         try:
@@ -136,31 +183,40 @@ def _existing_qp_pairs(json_files: list[str]) -> tuple[set[tuple[float, float]],
                 qp_data = json.load(f)
             baseline_qp = round(float(qp_data["baseline_qp"]), 6)
             beta = round(float(qp_data["beta"]), 6)
-            pairs.add((baseline_qp, beta))
+            quantize_cfg = qp_data.get("quantize_config", {})
+            qp_quats = round(float(qp_data.get("qp_quats", quantize_cfg.get("quats", 0))), 6)
+            qp_scales = round(float(qp_data.get("qp_scales", quantize_cfg.get("scales", 0))), 6)
+            qp_opacity = round(float(qp_data.get("qp_opacity", quantize_cfg.get("opacity", 0))), 6)
+            keys.add((baseline_qp, beta, qp_quats, qp_scales, qp_opacity))
         except Exception:
             invalid += 1
-    return pairs, invalid
+    return keys, invalid
 
 
-def _find_missing_qp_pairs(
+def _find_missing_config_keys(
     seq: SequenceCfg,
     frame_id: int,
     baseline_qps: list[float],
     betas: list[float],
-) -> tuple[set[tuple[float, float]], int, int, int]:
-    expected_pairs = _expected_qp_pairs(baseline_qps, betas)
+    qp_quats_list: list[float],
+    qp_scales_list: list[float],
+    qp_opacity_list: list[float],
+) -> tuple[set[ConfigKey], int, int, int]:
+    expected_keys = _expected_config_keys(
+        baseline_qps, betas, qp_quats_list, qp_scales_list, qp_opacity_list,
+    )
     json_files = find_qp_jsons(seq, frame_id)
-    existing_pairs, invalid = _existing_qp_pairs(json_files)
-    missing_pairs = expected_pairs - existing_pairs
-    return missing_pairs, len(expected_pairs), len(existing_pairs), invalid
+    existing_keys, invalid = _existing_config_keys(json_files)
+    missing_keys = expected_keys - existing_keys
+    return missing_keys, len(expected_keys), len(existing_keys), invalid
 
 
-def _format_pair_list(pairs: set[tuple[float, float]], max_items: int = 6) -> str:
-    if not pairs:
+def _format_config_key_list(keys: set[ConfigKey], max_items: int = 6) -> str:
+    if not keys:
         return ""
-    ordered = sorted(pairs)
+    ordered = sorted(keys)
     shown = ordered[:max_items]
-    summary = ", ".join([f"(qp={q}, beta={b})" for q, b in shown])
+    summary = ", ".join([f"(qp={q}, beta={b}, q={qv}, s={sv}, o={ov})" for q, b, qv, sv, ov in shown])
     if len(ordered) > max_items:
         summary += f", ... (+{len(ordered) - max_items} more)"
     return summary
@@ -245,6 +301,9 @@ def filter_qp_jsons_by_selection(
 def stage_generate(
     generate_baseline_qps: list[float],
     generate_betas: list[float],
+    generate_qp_quats: list[float],
+    generate_qp_scales: list[float],
+    generate_qp_opacity: list[float],
     selected_qp_dir_names: Optional[list[str]] = None,
     frame_ids: Optional[list[int]] = None,
 ) -> bool:
@@ -260,6 +319,9 @@ def stage_generate(
             output_root=QP_CONFIGS_ROOT,
             data_path=DATA_PATH,
             selected_qp_dir_names=selected_qp_dir_names,
+            qp_quats_list=generate_qp_quats,
+            qp_scales_list=generate_qp_scales,
+            qp_opacity_list=generate_qp_opacity,
         )
         return True
     except Exception as exc:
@@ -268,14 +330,17 @@ def stage_generate(
 
 
 def ensure_experiment_configs() -> bool:
-    missing_entries: list[tuple[SequenceCfg, int, set[tuple[float, float]], int, int, int]] = []
+    missing_entries: list[tuple[SequenceCfg, int, set[ConfigKey], int, int, int]] = []
     for seq in SEQUENCES:
         for frame_id in FRAME_IDS:
-            missing, expected_count, existing_count, invalid = _find_missing_qp_pairs(
+            missing, expected_count, existing_count, invalid = _find_missing_config_keys(
                 seq,
                 frame_id,
                 EXPERIMENT_BASELINE_QPS,
                 EXPERIMENT_BETA_VALUES,
+                EXPERIMENT_QP_QUATS,
+                EXPERIMENT_QP_SCALES,
+                EXPERIMENT_QP_OPACITY,
             )
             if missing:
                 missing_entries.append((seq, frame_id, missing, expected_count, existing_count, invalid))
@@ -297,6 +362,9 @@ def ensure_experiment_configs() -> bool:
     if not stage_generate(
         EXPERIMENT_BASELINE_QPS,
         EXPERIMENT_BETA_VALUES,
+        EXPERIMENT_QP_QUATS,
+        EXPERIMENT_QP_SCALES,
+        EXPERIMENT_QP_OPACITY,
         selected_qp_dir_names=missing_qp_dir_names,
         frame_ids=missing_frame_ids,
     ):
@@ -306,11 +374,14 @@ def ensure_experiment_configs() -> bool:
     unresolved = []
     for seq in SEQUENCES:
         for frame_id in FRAME_IDS:
-            missing, expected_count, existing_count, invalid = _find_missing_qp_pairs(
+            missing, expected_count, existing_count, invalid = _find_missing_config_keys(
                 seq,
                 frame_id,
                 EXPERIMENT_BASELINE_QPS,
                 EXPERIMENT_BETA_VALUES,
+                EXPERIMENT_QP_QUATS,
+                EXPERIMENT_QP_SCALES,
+                EXPERIMENT_QP_OPACITY,
             )
             if missing:
                 unresolved.append((seq, frame_id, missing, expected_count, existing_count, invalid))
@@ -322,91 +393,10 @@ def ensure_experiment_configs() -> bool:
                 f"  - {seq['qp_dir_name']} frame {frame_id}: missing {len(missing)}/{expected_count} "
                 f"(existing={existing_count}, invalid={invalid})"
             )
-            print(f"    Missing pairs: {_format_pair_list(missing)}")
+            print(f"    Missing keys: {_format_config_key_list(missing)}")
         return False
 
     print("[INFO] Missing experiment QP configs generated successfully.")
-    return True
-
-
-def ensure_plot_configs_exist(seq: SequenceCfg, frame_id: int) -> bool:
-    expected_pairs = _expected_qp_pairs(PLOT_BASELINE_QPS, PLOT_BETA_VALUES)
-    json_files = find_qp_jsons(seq, frame_id)
-    existing_pairs, invalid = _existing_qp_pairs(json_files)
-    missing = expected_pairs - existing_pairs
-    expected_count = len(expected_pairs)
-    existing_count = len(existing_pairs)
-    if not missing:
-        return True
-
-    existing_qps = {q for q, _ in existing_pairs}
-    existing_betas = {b for _, b in existing_pairs}
-
-    print(
-        f"[ERROR] Missing plotting QP configs for {seq['qp_dir_name']} frame {frame_id}: "
-        f"missing {len(missing)}/{expected_count} (existing={existing_count}, invalid={invalid})"
-    )
-    print(
-        f"        Required pairs: baseline_qps={_to_float_list(PLOT_BASELINE_QPS)}, "
-        f"beta_values={_to_float_list(PLOT_BETA_VALUES)}"
-    )
-    print(f"        Missing pairs: {_format_pair_list(missing)}")
-    print(f"        Available baseline_qps: {_format_value_list(existing_qps)}")
-    print(f"        Available beta_values: {_format_value_list(existing_betas)}")
-
-    print("[INFO] Attempting Stage 1 generation for missing plotting QP configs...")
-    if not stage_generate(
-        PLOT_BASELINE_QPS,
-        PLOT_BETA_VALUES,
-        selected_qp_dir_names=[seq["qp_dir_name"]],
-        frame_ids=[frame_id],
-    ):
-        print("[ERROR] Failed to generate missing plotting QP configs.")
-        return False
-
-    json_files = find_qp_jsons(seq, frame_id)
-    existing_pairs, invalid = _existing_qp_pairs(json_files)
-    missing = expected_pairs - existing_pairs
-    if not missing:
-        print(f"[INFO] Missing plotting QP configs generated for {seq['qp_dir_name']} frame {frame_id}.")
-        return True
-
-    print(
-        f"[ERROR] Plotting QP configs still missing after generation for {seq['qp_dir_name']} frame {frame_id}: "
-        f"missing {len(missing)}/{expected_count}"
-    )
-    print(f"        Missing pairs: {_format_pair_list(missing)}")
-    return False
-
-
-def ensure_plot_depth_results_exist(seq: SequenceCfg, frame_id: int, depth: int) -> bool:
-    depth_dir = config.experiment_dir(
-        DATA_PATH,
-        seq["dataset_name"],
-        seq["sequence_name"],
-        frame_id,
-        depth,
-        "",
-    ).rstrip(os.sep)
-    depth_dir = os.path.dirname(depth_dir)
-
-    if not os.path.isdir(depth_dir):
-        print(
-            f"[WARN] Missing plotting results directory for {seq['sequence_name']} "
-            f"frame {frame_id} (J={depth}): {depth_dir}"
-        )
-        return False
-
-    has_experiment_dirs = any(
-        os.path.isdir(os.path.join(depth_dir, entry)) for entry in os.listdir(depth_dir)
-    )
-    if not has_experiment_dirs:
-        print(
-            f"[WARN] Empty plotting results directory for {seq['sequence_name']} "
-            f"frame {frame_id} (J={depth}): {depth_dir}"
-        )
-        return False
-
     return True
 
 
@@ -598,54 +588,182 @@ def stage_evaluate(seq: SequenceCfg, frame_id: int, depths: list[int]) -> list[s
     return failed
 
 
-def stage_plot(
+def _normalize_plot_fixed_filters(
+    plot_specs: list[dict[str, Any]],
+) -> Optional[list[dict[str, float]]]:
+    normalized: list[dict[str, float]] = []
+
+    for idx, spec in enumerate(plot_specs):
+        fixed = spec.get("fixed", {})
+        if not isinstance(fixed, dict):
+            continue
+        if any(key not in config.KNOB_NAMES for key in fixed.keys()):
+            continue
+
+        normalized_fixed: dict[str, float] = {}
+        for key, raw_value in fixed.items():
+            try:
+                normalized_fixed[key] = round(float(raw_value), 6)
+            except (TypeError, ValueError):
+                print(
+                    f"[WARN] Plot spec #{idx} has non-numeric fixed value for '{key}': "
+                    f"{raw_value!r}. Skipping aggregation prefilter."
+                )
+                return None
+        normalized.append(normalized_fixed)
+
+    return normalized
+
+
+def _row_matches_fixed_constraints(row: dict[str, Any], fixed: dict[str, float]) -> bool:
+    for key, target_value in fixed.items():
+        row_value = row.get(key)
+        if row_value is None:
+            return False
+        try:
+            if round(float(row_value), 6) != target_value:
+                return False
+        except (TypeError, ValueError):
+            return False
+    return True
+
+
+def _filter_aggregate_rows_for_plots(
+    rows: list[dict[str, Any]],
+    plot_specs: Optional[list[dict[str, Any]]],
+) -> list[dict[str, Any]]:
+    if not rows or not plot_specs:
+        return rows
+
+    normalized_fixed_filters = _normalize_plot_fixed_filters(plot_specs)
+    if normalized_fixed_filters is None:
+        return rows
+    if not normalized_fixed_filters:
+        return rows
+
+    return [
+        row
+        for row in rows
+        if any(_row_matches_fixed_constraints(row, fixed) for fixed in normalized_fixed_filters)
+    ]
+
+
+def stage_aggregate(
     seq: SequenceCfg,
     frame_id: int,
-    plot_mode: str,
-    depth: Optional[int] = None,
-    target_beta: Optional[float] = None,
-    plot_depths: Optional[list[int]] = None,
-) -> None:
-    """Stage 3: plot RD curves via direct library call."""
+    depths: list[int],
+    plot_specs: Optional[list[dict[str, Any]]] = None,
+) -> str:
     output_root = config.rd_output_root(DATA_PATH, seq["dataset_name"], seq["sequence_name"])
+    all_rows: list[dict[str, Any]] = []
+    for depth in depths:
+        frame_dir = os.path.join(output_root, f"frame_{frame_id}", f"J_{depth}")
+        depth_results = _plot.collect_results(frame_dir, frame_id, depth=depth)
+        all_rows.extend(depth_results)
+
+    collected_count = len(all_rows)
+    all_rows = _filter_aggregate_rows_for_plots(all_rows, plot_specs)
+    filtered_count = len(all_rows)
+
+    csv_path = config.all_results_csv(DATA_PATH, seq["dataset_name"], seq["sequence_name"], frame_id)
+    os.makedirs(os.path.dirname(csv_path), exist_ok=True)
+    fieldnames = [
+        "depth", "baseline_qp", "beta", "qp_quats", "qp_scales", "qp_opacity",
+        "compressed_bytes", "compressed_mb", "decomp_psnr", "gt_psnr", "label",
+    ]
+    with open(csv_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in all_rows:
+            writer.writerow({name: row.get(name, "") for name in fieldnames})
+    if plot_specs:
+        print(
+            f"[INFO] Aggregated {filtered_count}/{collected_count} rows "
+            f"after applying plot fixed-filter union into: {csv_path}"
+        )
+    else:
+        print(f"[INFO] Aggregated {filtered_count} rows into: {csv_path}")
+    return csv_path
+
+
+def _depths_needed_for_plotting(
+    plot_specs: list[dict[str, Any]],
+    experiment_depths: list[int],
+) -> list[int]:
+    """Return the minimal depth set required to satisfy all plot specs."""
+    base_depths: list[int] = []
+    base_seen: set[int] = set()
+    for raw_depth in experiment_depths:
+        depth = int(raw_depth)
+        if depth in base_seen:
+            continue
+        base_seen.add(depth)
+        base_depths.append(depth)
+
+    needs_all_depths = False
+    requested_depths: list[int] = []
+    requested_seen: set[int] = set()
+
+    for spec in plot_specs:
+        curve_var = spec.get("curve_var")
+        fixed = spec.get("fixed", {})
+
+        if curve_var == "depth":
+            needs_all_depths = True
+            continue
+
+        if not isinstance(fixed, dict) or "depth" not in fixed:
+            continue
+
+        try:
+            depth = int(fixed["depth"])
+        except (TypeError, ValueError):
+            continue
+
+        if depth in requested_seen:
+            continue
+        requested_seen.add(depth)
+        requested_depths.append(depth)
+
+    if needs_all_depths or not requested_depths:
+        return base_depths
+
+    selected = [depth for depth in base_depths if depth in requested_seen]
+    for depth in requested_depths:
+        if depth not in base_seen:
+            selected.append(depth)
+    return selected
+
+
+def stage_plot(seq: SequenceCfg, frame_id: int, plot_spec: dict[str, Any]) -> None:
+    csv_path = config.all_results_csv(DATA_PATH, seq["dataset_name"], seq["sequence_name"], frame_id)
+    if not os.path.exists(csv_path):
+        print(f"[WARN] No aggregated CSV found: {csv_path}")
+        return
     plot_dir = config.plot_output_dir(DATA_PATH, seq["dataset_name"], seq["sequence_name"])
-
-    if plot_mode == "beta_under_depth":
-        if depth is None:
-            print("[WARN] stage_plot called with plot_mode=beta_under_depth but no depth.")
-            return
-        _plot.main(
-            frame_id=frame_id,
-            output_root=output_root,
-            plot_output_dir=plot_dir,
-            sequence_name=seq["sequence_name"],
-            beta_values=PLOT_BETA_VALUES,
-            baseline_qps=PLOT_BASELINE_QPS,
-            plot_mode=plot_mode,
-            octree_depth=depth,
-            psnr_range=PLOT_PSNR_RANGE,
-        )
+    curve_var = plot_spec["curve_var"]
+    fixed = plot_spec["fixed"]
+    if curve_var not in config.KNOB_NAMES:
+        print(f"[WARN] Invalid curve_var '{curve_var}'. Expected one of {sorted(config.KNOB_NAMES)}")
         return
-
-    if plot_mode == "depth_under_beta":
-        if target_beta is None:
-            print("[WARN] stage_plot called with plot_mode=depth_under_beta but no target_beta.")
-            return
-        _plot.main(
-            frame_id=frame_id,
-            output_root=output_root,
-            plot_output_dir=plot_dir,
-            sequence_name=seq["sequence_name"],
-            beta_values=PLOT_BETA_VALUES,
-            baseline_qps=PLOT_BASELINE_QPS,
-            plot_mode=plot_mode,
-            target_beta=target_beta,
-            plot_depths=plot_depths,
-            psnr_range=PLOT_PSNR_RANGE,
-        )
+    invalid_keys = [k for k in fixed if k not in config.KNOB_NAMES]
+    if invalid_keys:
+        print(f"[WARN] Invalid fixed keys {invalid_keys}; skipping.")
         return
-
-    print(f"[WARN] Unsupported plot mode '{plot_mode}'.")
+    fixed_tag = "_".join(f"{k}{v}" for k, v in sorted(fixed.items()))
+    output_path = os.path.join(
+        plot_dir,
+        f"rd_{seq['sequence_name']}_frame{frame_id}_{curve_var}_sweep_{fixed_tag}.png",
+    )
+    _plot.plot_rd(
+        csv_path=csv_path,
+        curve_var=curve_var,
+        fixed=fixed,
+        output_path=output_path,
+        sequence_name=seq["sequence_name"],
+        frame_id=frame_id,
+        psnr_range=PLOT_PSNR_RANGE,
+    )
 
 
 def main() -> None:
@@ -666,9 +784,12 @@ def main() -> None:
         f"depths={EXPERIMENT_DEPTHS}"
     )
     print(
-        f"  Plotting:   beta_values={PLOT_BETA_VALUES} baseline_qps={PLOT_BASELINE_QPS} "
-        f"depths={PLOT_DEPTHS} modes={PLOT_MODES} psnr_range={PLOT_PSNR_RANGE}"
+        f"  Attr QPs:   quats={EXPERIMENT_QP_QUATS} scales={EXPERIMENT_QP_SCALES} "
+        f"opacity={EXPERIMENT_QP_OPACITY}"
     )
+    print(f"  Plotting:   specs={PLOTS} psnr_range={PLOT_PSNR_RANGE}")
+    plot_aggregate_depths = _depths_needed_for_plotting(PLOTS, EXPERIMENT_DEPTHS)
+    print(f"  Plotting:   aggregate_depths={plot_aggregate_depths}")
     print(sep)
 
     if RUN_EVALUATE:
@@ -677,7 +798,6 @@ def main() -> None:
             raise SystemExit(1)
 
     all_failures: list[str] = []
-    had_stage_failures = False
 
     for seq in SEQUENCES:
         for frame_id in FRAME_IDS:
@@ -691,55 +811,15 @@ def main() -> None:
                     all_failures += [f"{seq['sequence_name']}/frame_{frame_id}/{f}" for f in failed]
 
             if RUN_PLOT and not STAGE2_DISABLE_IMAGE_AND_PLY_SAVING:
-                if not ensure_plot_configs_exist(seq, frame_id):
-                    had_stage_failures = True
-                    all_failures.append(f"{seq['sequence_name']}/frame_{frame_id}/plot_stage")
-                    continue
-                available_plot_depths = [
-                    depth for depth in PLOT_DEPTHS
-                    if ensure_plot_depth_results_exist(seq, frame_id, depth)
-                ]
-
-                for plot_mode in PLOT_MODES:
-                    if plot_mode == "beta_under_depth":
-                        for depth in available_plot_depths:
-                            stage_plot(
-                                seq,
-                                frame_id,
-                                plot_mode=plot_mode,
-                                depth=depth,
-                            )
-                    elif plot_mode == "depth_under_beta":
-                        if not available_plot_depths:
-                            print(
-                                f"[WARN] Stage 3 plot skipped for {seq['sequence_name']} frame {frame_id}: "
-                                "no depth results available for depth_under_beta mode."
-                            )
-                            had_stage_failures = True
-                            all_failures.append(
-                                f"{seq['sequence_name']}/frame_{frame_id}/plot_stage/{plot_mode}/no_depths"
-                            )
-                            continue
-                        for beta in PLOT_BETA_VALUES:
-                            stage_plot(
-                                seq,
-                                frame_id,
-                                plot_mode=plot_mode,
-                                target_beta=beta,
-                                plot_depths=available_plot_depths,
-                            )
-                    else:
-                        print(f"[WARN] Unknown plot mode '{plot_mode}' in PLOT_MODES.")
-                        had_stage_failures = True
-                        all_failures.append(
-                            f"{seq['sequence_name']}/frame_{frame_id}/plot_stage/unknown_mode/{plot_mode}"
-                        )
+                stage_aggregate(seq, frame_id, plot_aggregate_depths, plot_specs=PLOTS)
+                for plot_spec in PLOTS:
+                    stage_plot(seq, frame_id, plot_spec=plot_spec)
             elif RUN_PLOT and STAGE2_DISABLE_IMAGE_AND_PLY_SAVING:
                 print("[WARN] Stage 3 plot skipped because Stage-2 fast mode disabled image/PLY saving.")
 
     print(f"\n{sep}")
     print("Pipeline complete.")
-    if all_failures or had_stage_failures:
+    if all_failures:
         print(f"  Failed experiments ({len(all_failures)}):")
         for failure in all_failures:
             print(f"    {failure}")

@@ -200,17 +200,10 @@ if __name__ == "__main__":
     parser.add_argument("--sh_color_space", type=str, default="rgb",
                         choices=["rgb", "yuv", "klt"],
                         help="Color space for SH coefficients (default: rgb)")
-    parser.add_argument("--color_rescale", action="store_true", default=True,
-                        help="Rescale SH to [0, 255] before color transform (default: True)")
-    parser.add_argument("--no_color_rescale", action="store_true",
-                        help="Disable SH color rescaling")
     parser.add_argument("--rlgr_block_size", type=int, default=4096,
                         help="RLGR parallel block size (default: 4096)")
     parser.add_argument("--device", type=str, default="cuda:0")
     args = parser.parse_args()
-
-    if args.no_color_rescale:
-        args.color_rescale = False
 
     # Build quantize_step dict
     qs = args.quantize_step
@@ -245,7 +238,6 @@ if __name__ == "__main__":
     print(f"  Quantize steps:     quats={quantize_step['quats']}, scales={quantize_step['scales']}, "
           f"opacity={quantize_step['opacity']}, sh_dc={quantize_step['sh_dc']}, sh_rest={quantize_step['sh_rest']}")
     print(f"  SH color space:     {args.sh_color_space}")
-    print(f"  Color rescale:      {args.color_rescale}")
     print(f"  RLGR block size:    {args.rlgr_block_size}")
     print("=" * 70)
 
@@ -264,7 +256,6 @@ if __name__ == "__main__":
     compressed_state = encode_livogs(
         params, J=args.J, device=device, device_id=device_id,
         sh_color_space=args.sh_color_space,
-        color_rescale=args.color_rescale,
         quantize_step=quantize_step,
         rlgr_block_size=args.rlgr_block_size,
     )
@@ -297,7 +288,6 @@ if __name__ == "__main__":
         compressed_state = encode_livogs(
             params, J=args.J, device=device, device_id=device_id,
             sh_color_space=args.sh_color_space,
-            color_rescale=args.color_rescale,
             quantize_step=quantize_step,
             rlgr_block_size=args.rlgr_block_size,
         )
@@ -388,7 +378,6 @@ if __name__ == "__main__":
             "J": args.J,
             "quantize_step": quantize_step,
             "sh_color_space": args.sh_color_space,
-            "color_rescale": args.color_rescale,
             "rlgr_block_size": args.rlgr_block_size,
             "sh_degree": args.sh_degree,
             "frame_start": args.frame_start,
