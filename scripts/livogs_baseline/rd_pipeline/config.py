@@ -18,7 +18,7 @@ def setup_livogs_imports() -> None:
     sys.path.insert(0, QUEEN_ROOT)
     if LIVOGS_COMPRESSION in sys.path:
         sys.path.remove(LIVOGS_COMPRESSION)
-    sys.path.append(LIVOGS_COMPRESSION)
+    sys.path.insert(0, LIVOGS_COMPRESSION)
 
 
 DATA_PATH = "/synology/rajrup/Queen"

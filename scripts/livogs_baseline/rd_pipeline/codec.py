@@ -20,8 +20,10 @@ from plyfile import PlyData, PlyElement
 from tqdm import tqdm
 
 from compress_decompress import decode_livogs, encode_livogs
-from utils.system_utils import searchForMaxIteration
 
+def searchForMaxIteration(folder: str) -> int:
+    """Find highest iteration number in a checkpoint directory."""
+    return max(int(fname.split("_")[-1]) for fname in os.listdir(folder))
 
 def find_queen_ply_path(frame_dir: str) -> str:
     """Find PLY file in a QUEEN frame directory."""
