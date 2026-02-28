@@ -72,8 +72,8 @@ STAGE2_GPUS = [0, 1]
 STAGE2_WORKERS_PER_GPU = 3
 STAGE2_DISABLE_IMAGE_AND_PLY_SAVING = True
 SKIP_SAVED_EXPERIEMNTS = True
-RUN_EVALUATE = True
-RUN_PLOT = False
+RUN_EVALUATE = False
+RUN_PLOT = True
 
 EXPERIMENT_BETA_VALUES = [0.0]
 EXPERIMENT_BASELINE_QPS = [v / 255.0 for v in [0.01, 0.1, 0.5, 1, 2, 4, 8, 16]]
@@ -98,15 +98,9 @@ PLOT_PSNR_RANGE: Optional[tuple[float, float]] = None
 # Important: any knob not fixed in a spec can still vary in that plot. For
 # example, omitting baseline_qp means all available baseline_qp rows are kept.
 PLOTS: list[dict[str, Any]] = [
-    {
-        "curve_var": "qp_opacity",
-        "fixed": {
-            "beta": 0.0,
-            "qp_quats": 0.00005,
-            "qp_scales": 0.0001,
-            "qp_opacity": 0.0001,
-        },
-    },
+]
+PLOT_CONFIG_JSONS: list[str] = [
+    os.path.join(SCRIPT_DIR, "plot_configs", "default.json"),
 ]
 
 QP_CONFIGS_ROOT = config.QP_CONFIGS_ROOT
@@ -735,7 +729,69 @@ def _depths_needed_for_plotting(
     return selected
 
 
-def stage_plot(seq: SequenceCfg, frame_id: int, plot_spec: dict[str, Any]) -> None:
+def _parse_one_plot_group(cfg: dict[str, Any], source: str) -> dict[str, Any]:
+    """Parse a single plot-group dict into {source, plots, psnr_range}."""
+    plots: list[dict[str, Any]] = cfg.get("plots", [])
+    raw_range = cfg.get("psnr_range")
+    psnr_range: Optional[tuple[float, float]] = None
+    if isinstance(raw_range, (list, tuple)) and len(raw_range) == 2:
+        try:
+            psnr_range = (float(raw_range[0]), float(raw_range[1]))
+        except (TypeError, ValueError):
+            pass
+    return {"source": source, "plots": plots, "psnr_range": psnr_range}
+
+
+def load_plot_config(json_path: str) -> list[dict[str, Any]]:
+    """Load one or more plot-configuration groups from a JSON file.
+
+    Accepts two formats::
+
+        // Single group
+        {"psnr_range": [min, max] | null, "plots": [...]}
+
+        // Multiple groups in one file
+        [
+            {"psnr_range": ..., "plots": [...]},
+            {"psnr_range": ..., "plots": [...]}
+        ]
+    """
+    with open(json_path, "r", encoding="utf-8") as f:
+        cfg = json.load(f)
+    if isinstance(cfg, list):
+        return [_parse_one_plot_group(entry, json_path) for entry in cfg if isinstance(entry, dict)]
+    return [_parse_one_plot_group(cfg, json_path)]
+
+
+def resolve_plot_groups() -> list[dict[str, Any]]:
+    """Build plot groups: always inline PLOTS, plus any PLOT_CONFIG_JSONS."""
+    groups: list[dict[str, Any]] = []
+    if PLOTS:
+        groups.append({"source": "inline", "plots": PLOTS, "psnr_range": PLOT_PSNR_RANGE})
+    for path in PLOT_CONFIG_JSONS:
+        abs_path = path if os.path.isabs(path) else os.path.join(QUEEN_ROOT, path)
+        if not os.path.isfile(abs_path):
+            print(f"[WARN] Plot config JSON not found: {abs_path}")
+            continue
+        try:
+            loaded = load_plot_config(abs_path)
+        except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
+            print(f"[WARN] Failed to load plot config {abs_path}: {exc}")
+            continue
+        groups.extend(loaded)
+        total_specs = sum(len(g["plots"]) for g in loaded)
+        print(f"[INFO] Loaded plot config: {abs_path} ({len(loaded)} group(s), {total_specs} specs)")
+    if not groups:
+        print("[WARN] No plot specs defined (PLOTS is empty and no config JSONs loaded).")
+    return groups
+
+
+def stage_plot(
+    seq: SequenceCfg,
+    frame_id: int,
+    plot_spec: dict[str, Any],
+    psnr_range: Optional[tuple[float, float]] = None,
+) -> None:
     csv_path = config.all_results_csv(DATA_PATH, seq["dataset_name"], seq["sequence_name"], frame_id)
     if not os.path.exists(csv_path):
         print(f"[WARN] No aggregated CSV found: {csv_path}")
@@ -762,7 +818,7 @@ def stage_plot(seq: SequenceCfg, frame_id: int, plot_spec: dict[str, Any]) -> No
         output_path=output_path,
         sequence_name=seq["sequence_name"],
         frame_id=frame_id,
-        psnr_range=PLOT_PSNR_RANGE,
+        psnr_range=psnr_range,
     )
 
 
@@ -787,9 +843,14 @@ def main() -> None:
         f"  Attr QPs:   quats={EXPERIMENT_QP_QUATS} scales={EXPERIMENT_QP_SCALES} "
         f"opacity={EXPERIMENT_QP_OPACITY}"
     )
-    print(f"  Plotting:   specs={PLOTS} psnr_range={PLOT_PSNR_RANGE}")
-    plot_aggregate_depths = _depths_needed_for_plotting(PLOTS, EXPERIMENT_DEPTHS)
-    print(f"  Plotting:   aggregate_depths={plot_aggregate_depths}")
+    plot_groups = resolve_plot_groups() if RUN_PLOT else []
+    print(f"  Plotting:   {len(plot_groups)} group(s), config_jsons={PLOT_CONFIG_JSONS or '(inline)'}")
+    for gi, group in enumerate(plot_groups):
+        gd = _depths_needed_for_plotting(group["plots"], EXPERIMENT_DEPTHS)
+        print(
+            f"    [{gi}] source={group['source']}, specs={len(group['plots'])}, "
+            f"psnr_range={group['psnr_range']}, depths={gd}"
+        )
     print(sep)
 
     if RUN_EVALUATE:
@@ -810,12 +871,18 @@ def main() -> None:
                 if failed:
                     all_failures += [f"{seq['sequence_name']}/frame_{frame_id}/{f}" for f in failed]
 
-            if RUN_PLOT and not STAGE2_DISABLE_IMAGE_AND_PLY_SAVING:
-                stage_aggregate(seq, frame_id, plot_aggregate_depths, plot_specs=PLOTS)
-                for plot_spec in PLOTS:
-                    stage_plot(seq, frame_id, plot_spec=plot_spec)
-            elif RUN_PLOT and STAGE2_DISABLE_IMAGE_AND_PLY_SAVING:
-                print("[WARN] Stage 3 plot skipped because Stage-2 fast mode disabled image/PLY saving.")
+            if RUN_PLOT:
+                if RUN_EVALUATE and STAGE2_DISABLE_IMAGE_AND_PLY_SAVING:
+                    print(
+                        "[WARN] Stage-2 fast mode skips quality evaluation for new runs; "
+                        "Stage 3 plotting will only use experiments that already have "
+                        "evaluation/evaluation_results.json."
+                    )
+                for group in plot_groups:
+                    group_depths = _depths_needed_for_plotting(group["plots"], EXPERIMENT_DEPTHS)
+                    stage_aggregate(seq, frame_id, group_depths, plot_specs=group["plots"])
+                    for plot_spec in group["plots"]:
+                        stage_plot(seq, frame_id, plot_spec, psnr_range=group["psnr_range"])
 
     print(f"\n{sep}")
     print("Pipeline complete.")
