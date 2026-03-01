@@ -6,6 +6,7 @@ import csv
 import glob
 import json
 import os
+import shutil
 import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -130,6 +131,29 @@ def _run_subprocess(
         return False
     return True
 
+
+def _remove_failed_experiment(
+    seq: SequenceCfg,
+    frame_id: int,
+    depth: int,
+    label: str,
+) -> None:
+    """Remove the output directory for a failed/interrupted experiment.
+
+    This prevents partial results from being treated as complete when
+    SKIP_SAVED_EXPERIEMNTS is True on the next run.
+    """
+    exp_dir = config.experiment_dir(
+        DATA_PATH,
+        seq["dataset_name"],
+        seq["sequence_name"],
+        frame_id,
+        depth,
+        label,
+    )
+    if os.path.isdir(exp_dir):
+        shutil.rmtree(exp_dir, ignore_errors=True)
+        print(f"  [CLEANUP] Removed partial results for failed experiment: {exp_dir}")
 
 def find_qp_jsons(seq: SequenceCfg, frame_id: int) -> list[str]:
     """Return sorted QP config JSON paths for one sequence+frame."""
@@ -559,6 +583,7 @@ def stage_evaluate(seq: SequenceCfg, frame_id: int, depths: list[int]) -> list[s
             )
             if not ok:
                 failed.append(f"{job['label']}/J_{job['depth']}")
+                _remove_failed_experiment(seq, frame_id, job["depth"], job["label"])
         return failed
 
     with ThreadPoolExecutor(max_workers=total_workers) as executor:
@@ -578,6 +603,7 @@ def stage_evaluate(seq: SequenceCfg, frame_id: int, depths: list[int]) -> list[s
             ok = future.result()
             if not ok:
                 failed.append(f"{job['label']}/J_{job['depth']}")
+                _remove_failed_experiment(seq, frame_id, job["depth"], job["label"])
 
     return failed
 
