@@ -38,11 +38,12 @@ def main():
     parser.add_argument("--j", type=int, required=True, help="Octree depth J (e.g. 15)")
     parser.add_argument("--qstep", type=str, required=True, help="Quantization step (e.g. 0.0001)")
     parser.add_argument("--sh_color_space", type=str, required=True, help="Color space (e.g. klt)")
+    parser.add_argument("--nvcomp", type=str, default="ANS", help="nvCOMP algorithm (e.g. ANS, None)")
     parser.add_argument("--output_folder", type=str, required=True,
                         help="Output folder for plot PNG")
     args = parser.parse_args()
 
-    config_name = f"J_{args.j}_qstep_{args.qstep}_{args.sh_color_space}"
+    config_name = f"J_{args.j}_qstep_{args.qstep}_{args.sh_color_space}_nvcomp_{args.nvcomp}"
     config_dir = os.path.join(args.input_folder, config_name)
     csv_path = os.path.join(config_dir, "benchmark_livogs.csv")
     out_dir = os.path.join(args.output_folder, "plots", args.dataset_name, args.sequence_name, config_name)
@@ -63,11 +64,16 @@ def main():
     attr_mb = [r["attribute_compressed_bytes"] / 1024 / 1024 for r in rows]
     total_mb = [r["compressed_size_bytes"] / 1024 / 1024 for r in rows]
 
+    avg_unc = sum(uncompressed_mb) / n
+    avg_tot = sum(total_mb) / n
+    avg_pos = sum(pos_mb) / n
+    avg_attr = sum(attr_mb) / n
+
     fig, ax = plt.subplots(figsize=(12, 5))
-    ax.plot(x, uncompressed_mb, "o-", label="Uncompressed", color="gray", markersize=2, alpha=0.7)
-    ax.plot(x, total_mb, "s-", label="Total compressed", color="coral", markersize=2)
-    ax.plot(x, attr_mb, "^-", label="Attribute compressed", color="steelblue", markersize=2)
-    ax.plot(x, pos_mb, "v-", label="Position compressed", color="seagreen", markersize=2)
+    ax.plot(x, uncompressed_mb, "o-", label=f"Uncompressed (avg {avg_unc:.2f} MB)", color="gray", markersize=2, alpha=0.7)
+    ax.plot(x, total_mb, "s-", label=f"Total compressed (avg {avg_tot:.2f} MB)", color="coral", markersize=2)
+    ax.plot(x, attr_mb, "^-", label=f"Attribute compressed (avg {avg_attr:.2f} MB)", color="steelblue", markersize=2)
+    ax.plot(x, pos_mb, "v-", label=f"Position compressed (avg {avg_pos:.2f} MB)", color="seagreen", markersize=2)
 
     ax.set_xlabel("Frame")
     ax.set_ylabel("Size (MB)")
@@ -77,16 +83,6 @@ def main():
     ax.set_xticklabels(frame_ids[::tick_every], rotation=90)
     ax.legend(fontsize=8)
     ax.grid(True, alpha=0.3)
-
-    avg_unc = sum(uncompressed_mb) / n
-    avg_tot = sum(total_mb) / n
-    ratio = avg_tot / avg_unc * 100 if avg_unc > 0 else 0
-    ax.annotate(
-        f"avg uncompressed={avg_unc:.2f} MB, compressed={avg_tot:.2f} MB ({ratio:.1f}%)",
-        xy=(0.02, 0.95), xycoords="axes fraction",
-        fontsize=9, va="top",
-        bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="gray", alpha=0.8),
-    )
 
     fig.tight_layout()
     size_path = os.path.join(out_dir, "compressed_size.png")
