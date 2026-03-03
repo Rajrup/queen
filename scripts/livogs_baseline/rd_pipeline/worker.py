@@ -24,6 +24,8 @@ def main() -> None:
     parser.add_argument("--data_path", default=config.DATA_PATH)
     parser.add_argument("--dataset_name", required=True)
     parser.add_argument("--sequence_name", required=True)
+    parser.add_argument("--rd_output_subdir", default=config.RD_OUTPUT_SUBDIR,
+                        help="RD output subdirectory under compression/")
     parser.add_argument("--resolution", type=int, default=config.RESOLUTION)
     parser.add_argument("--frame_id", type=int, default=None,
                         help="Single frame to process (overrides --frame_start/--frame_end)")
@@ -72,6 +74,7 @@ def main() -> None:
             frame_id,
             args.j,
             qp_label,
+            rd_subdir_name=args.rd_output_subdir,
         )
     else:
         output_folder = config.standard_output_dir(
