@@ -36,10 +36,10 @@ RD_OUTPUT_ROOTS: list[dict[str, Any]] = [
         "path": "/synology/rajrup/Queen/pretrained_output/Neural_3D_Video/queen_compressed_flame_salmon_1/compression/livogs_rd",
         "frame_ids": [1],
     },
-    # {
-    #     "path": "/synology/rajrup/Queen/pretrained_output/Neural_3D_Video/queen_compressed_sear_steak/compression/livogs_rd",
-    #     "frame_ids": [1],
-    # },
+    {
+        "path": "/synology/rajrup/Queen/pretrained_output/Neural_3D_Video/queen_compressed_sear_steak/compression/livogs_rd",
+        "frame_ids": [1],
+    },
 ]
 
 OUTPUT_CSV: Optional[str] = None
@@ -279,41 +279,59 @@ def collect_rd_root(
     return rows
 
 
+def _default_output_csv_for_root(rd_root: str) -> str:
+    return os.path.join(rd_root, "collected_rd_results.csv")
+
+
+def _write_rows_to_csv(rows: list[dict[str, Any]], output_path: str) -> None:
+    os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
+    with open(output_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=CSV_COLUMNS)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({col: row.get(col, "") for col in CSV_COLUMNS})
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
 def main() -> None:
-    all_rows: list[dict[str, Any]] = []
+    total_rows = 0
+    written_files = 0
+
+    if OUTPUT_CSV is not None and len(RD_OUTPUT_ROOTS) > 1:
+        print("[WARN] OUTPUT_CSV is ignored when multiple RD_OUTPUT_ROOTS are configured.")
+        print("       Writing one CSV per root instead.")
 
     for entry in RD_OUTPUT_ROOTS:
         rd_root = entry["path"]
         seq_name = entry.get("name") or _infer_sequence_name(rd_root)
         frame_ids = entry.get("frame_ids")
+        output_path = entry.get("output_csv")
+        if output_path is None:
+            if OUTPUT_CSV is not None and len(RD_OUTPUT_ROOTS) == 1:
+                output_path = OUTPUT_CSV
+            else:
+                output_path = _default_output_csv_for_root(rd_root)
 
         print(f"Scanning: {seq_name}  ({rd_root})")
         rows = collect_rd_root(rd_root, seq_name, frame_ids=frame_ids)
-        all_rows.extend(rows)
         print(f"  Collected {len(rows)} result(s)")
 
-    if not all_rows:
-        print("[WARN] No results collected.")
+        _write_rows_to_csv(rows, output_path)
+        written_files += 1
+        total_rows += len(rows)
+        print(f"  Wrote {len(rows)} row(s) to: {output_path}")
+
+    if written_files == 0:
+        print("[WARN] No RD roots were processed.")
         return
 
-    output_path = OUTPUT_CSV
-    if output_path is None:
-        first_root = RD_OUTPUT_ROOTS[0]["path"]
-        output_path = os.path.join(first_root, "collected_rd_results.csv")
+    if total_rows == 0:
+        print("[WARN] No results collected across all roots.")
 
-    os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
-
-    with open(output_path, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=CSV_COLUMNS)
-        writer.writeheader()
-        for row in all_rows:
-            writer.writerow({col: row.get(col, "") for col in CSV_COLUMNS})
-
-    print(f"\nWrote {len(all_rows)} rows to: {output_path}")
+    print(f"\nWrote {total_rows} total rows across {written_files} file(s).")
 
 
 if __name__ == "__main__":

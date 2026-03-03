@@ -4,8 +4,9 @@
         "plots": [
             {
                 "curve_var": "qp_opacity",
+                "curve_values": [0.0001, 0.001, 0.01, 0.02, 0.04, 0.06],
                 "fixed": {
-                    "depth": 17,
+                    "depth": [12,13,14,15,16,17,18],
                     "beta": 0.0,
                     "qp_quats": 0.0001,
                     "qp_scales": 0.0001
@@ -18,8 +19,9 @@
         "plots": [
             {
                 "curve_var": "qp_quats",
+                "curve_values": [0.0001, 0.001, 0.01, 0.02, 0.04, 0.06],
                 "fixed": {
-                    "depth": 17,
+                    "depth": [12,13,14,15,16,17,18],
                     "beta": 0.0,
                     "qp_scales": 0.0001,
                     "qp_opacity": 0.0001
@@ -32,8 +34,9 @@
         "plots": [
             {
                 "curve_var": "qp_scales",
+                "curve_values": [0.0001, 0.001, 0.01, 0.02, 0.04, 0.06],
                 "fixed": {
-                    "depth": 17,
+                    "depth": [12,13,14,15,16,17,18],
                     "beta": 0.0,
                     "qp_quats": 0.0001,
                     "qp_opacity": 0.0001

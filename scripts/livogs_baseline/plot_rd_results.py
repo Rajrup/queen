@@ -11,6 +11,7 @@ Edit the "Global configuration" section below, then run::
     python scripts/livogs_baseline/plot_rd_results.py
 """
 
+import itertools
 import json
 import os
 import sys
@@ -39,10 +40,10 @@ RD_OUTPUT_ROOTS: list[dict[str, Any]] = [
         "path": "/synology/rajrup/Queen/pretrained_output/Neural_3D_Video/queen_compressed_flame_salmon_1/compression/livogs_rd",
         "frame_ids": [1],
     },
-    # {
-    #     "path": "/synology/rajrup/Queen/pretrained_output/Neural_3D_Video/queen_compressed_sear_steak/compression/livogs_rd",
-    #     "frame_ids": [1],
-    # },
+    {
+        "path": "/synology/rajrup/Queen/pretrained_output/Neural_3D_Video/queen_compressed_sear_steak/compression/livogs_rd",
+        "frame_ids": [1],
+    },
 ]
 
 # Plot specifications.  Each group has an optional psnr_range and a list of
@@ -69,10 +70,8 @@ PLOT_CONFIG_JSONS: list[str] = [
     os.path.join(SCRIPT_DIR, "plot_configs", "default.json"),
 ]
 
-# Output directory for plots.  None = place inside first RD root under plots/.
 PLOT_OUTPUT_DIR: Optional[str] = None
 
-# Collected CSV path.  None = auto (first RD root / collected_rd_results.csv).
 COLLECTED_CSV: Optional[str] = None
 
 
@@ -126,37 +125,57 @@ def resolve_plot_groups() -> list[dict[str, Any]]:
 # Collection (delegates to collect_rd_results)
 # ---------------------------------------------------------------------------
 
-def collect_all(csv_path: str) -> str:
-    """Collect results from all RD roots into a single CSV. Returns the path."""
+def _default_collected_csv(rd_root: str) -> str:
+    return os.path.join(rd_root, "collected_rd_results.csv")
+
+
+def _default_plot_dir(rd_root: str) -> str:
+    return os.path.join(rd_root, "plots")
+
+
+def collect_all() -> list[dict[str, str]]:
     import csv as _csv
     from collect_rd_results import CSV_COLUMNS
 
-    all_rows: list[dict[str, Any]] = []
+    collected: list[dict[str, str]] = []
+
+    if COLLECTED_CSV is not None and len(RD_OUTPUT_ROOTS) > 1:
+        print("[WARN] COLLECTED_CSV is ignored when multiple RD_OUTPUT_ROOTS are configured.")
+        print("       Writing one CSV per root instead.")
 
     for entry in RD_OUTPUT_ROOTS:
         rd_root = entry["path"]
         seq_name = entry.get("name") or _infer_sequence_name(rd_root)
         frame_ids = entry.get("frame_ids")
+        csv_path = entry.get("output_csv")
+        if csv_path is None:
+            if COLLECTED_CSV is not None and len(RD_OUTPUT_ROOTS) == 1:
+                csv_path = COLLECTED_CSV
+            else:
+                csv_path = _default_collected_csv(rd_root)
 
         print(f"Collecting: {seq_name}  ({rd_root})")
         rows = collect_rd_root(rd_root, seq_name, frame_ids=frame_ids)
-        all_rows.extend(rows)
         print(f"  {len(rows)} result(s)")
 
-    if not all_rows:
-        print("[WARN] No results collected.")
-        return csv_path
+        os.makedirs(os.path.dirname(os.path.abspath(csv_path)), exist_ok=True)
+        with open(csv_path, "w", newline="", encoding="utf-8") as f:
+            writer = _csv.DictWriter(f, fieldnames=CSV_COLUMNS)
+            writer.writeheader()
+            for row in rows:
+                writer.writerow({col: row.get(col, "") for col in CSV_COLUMNS})
 
-    os.makedirs(os.path.dirname(os.path.abspath(csv_path)), exist_ok=True)
+        print(f"  Wrote {len(rows)} rows to: {csv_path}\n")
+        collected.append({
+            "rd_root": rd_root,
+            "sequence_name": seq_name,
+            "csv_path": csv_path,
+        })
 
-    with open(csv_path, "w", newline="", encoding="utf-8") as f:
-        writer = _csv.DictWriter(f, fieldnames=CSV_COLUMNS)
-        writer.writeheader()
-        for row in all_rows:
-            writer.writerow({col: row.get(col, "") for col in CSV_COLUMNS})
+    if not collected:
+        print("[WARN] No RD roots processed.")
 
-    print(f"Wrote {len(all_rows)} rows to: {csv_path}\n")
-    return csv_path
+    return collected
 
 
 # ---------------------------------------------------------------------------
@@ -185,33 +204,55 @@ def generate_plots(csv_path: str, plot_dir: str, plot_groups: list[dict[str, Any
         psnr_range = group.get("psnr_range")
         for plot_spec in group.get("plots", []):
             curve_var = plot_spec.get("curve_var")
-            fixed = plot_spec.get("fixed", {})
+            raw_fixed = plot_spec.get("fixed", {})
+            curve_values = plot_spec.get("curve_values")
 
             if curve_var not in KNOB_NAMES:
                 print(f"[WARN] Invalid curve_var '{curve_var}'; skipping.")
                 continue
-            invalid_keys = [k for k in fixed if k not in KNOB_NAMES]
+            invalid_keys = [k for k in raw_fixed if k not in KNOB_NAMES]
             if invalid_keys:
                 print(f"[WARN] Invalid fixed keys {invalid_keys}; skipping.")
                 continue
 
-            fixed_tag = "_".join(f"{k}{v}" for k, v in sorted(fixed.items()))
+            # Expand list-valued fixed keys into cartesian product
+            list_keys = sorted(
+                k for k, v in raw_fixed.items() if isinstance(v, (list, tuple))
+            )
+            scalar_fixed = {
+                k: v for k, v in raw_fixed.items() if not isinstance(v, (list, tuple))
+            }
 
-            for seq_name, frame_ids in sorted(seq_frames.items()):
-                for frame_id in sorted(frame_ids):
-                    output_path = os.path.join(
-                        plot_dir,
-                        f"rd_{seq_name}_frame{frame_id}_{curve_var}_sweep_{fixed_tag}.png",
-                    )
-                    plot_rd(
-                        csv_path=csv_path,
-                        curve_var=curve_var,
-                        fixed=fixed,
-                        output_path=output_path,
-                        sequence_name=seq_name,
-                        frame_id=frame_id,
-                        psnr_range=psnr_range,
-                    )
+            if list_keys:
+                combos = list(itertools.product(
+                    *(raw_fixed[k] for k in list_keys)
+                ))
+            else:
+                combos = [()]
+
+            for combo in combos:
+                fixed = dict(scalar_fixed)
+                for k, v in zip(list_keys, combo):
+                    fixed[k] = v
+
+                fixed_tag = "_".join(f"{k}{v}" for k, v in sorted(fixed.items()))
+
+                for seq_name, frame_ids in sorted(seq_frames.items()):
+                    for frame_id in sorted(frame_ids):
+                        output_path = os.path.join(
+                            plot_dir,
+                            f"rd_{seq_name}_frame{frame_id}_{curve_var}_sweep_{fixed_tag}.png",
+                        )
+                        plot_rd(
+                            csv_path=csv_path,
+                            curve_var=curve_var,
+                            fixed=fixed,
+                            output_path=output_path,
+                            sequence_name=seq_name,
+                            frame_id=frame_id,
+                            psnr_range=psnr_range,
+                            curve_values=curve_values,
+                        )
 
 
 # ---------------------------------------------------------------------------
@@ -226,29 +267,26 @@ def main() -> None:
     print(f"  Config JSONs: {PLOT_CONFIG_JSONS or '(none)'}")
     print(sep)
 
-    # Resolve paths
-    first_root = RD_OUTPUT_ROOTS[0]["path"]
-
-    csv_path = COLLECTED_CSV
-    if csv_path is None:
-        csv_path = os.path.join(first_root, "collected_rd_results.csv")
-
-    plot_dir = PLOT_OUTPUT_DIR
-    if plot_dir is None:
-        plot_dir = os.path.join(first_root, "plots")
-
     # Step 1: Collect
     print(f"\n{sep}\nStep 1: Collect results\n{sep}")
-    collect_all(csv_path)
+    collected_infos = collect_all()
 
     # Step 2: Plot
     print(f"{sep}\nStep 2: Generate plots\n{sep}")
     plot_groups = resolve_plot_groups()
     total_specs = sum(len(g.get("plots", [])) for g in plot_groups)
     print(f"  {len(plot_groups)} group(s), {total_specs} plot spec(s)")
-    print(f"  Output: {plot_dir}\n")
 
-    generate_plots(csv_path, plot_dir, plot_groups)
+    for info in collected_infos:
+        rd_root = info["rd_root"]
+        csv_path = info["csv_path"]
+        seq_name = info["sequence_name"]
+        plot_dir = PLOT_OUTPUT_DIR if PLOT_OUTPUT_DIR is not None else _default_plot_dir(rd_root)
+
+        print(f"  Sequence: {seq_name}")
+        print(f"    CSV:    {csv_path}")
+        print(f"    Output: {plot_dir}")
+        generate_plots(csv_path, plot_dir, plot_groups)
 
     print(f"\n{sep}")
     print("Done.")
