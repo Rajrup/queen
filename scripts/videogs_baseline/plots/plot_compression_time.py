@@ -80,6 +80,7 @@ def main():
                  labels=labels, colors=colors, alpha=0.8)
     ax.set_xlabel("Frame")
     ax.set_ylabel("Time (ms)")
+    ax.set_ylim(0, 4000)
     ax.set_xticks(x[::tick_every])
     ax.set_xticklabels(frame_ids[::tick_every], rotation=90)
     ax.legend(loc="upper right")

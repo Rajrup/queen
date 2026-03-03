@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-LiVoGS Compression + Decompression for QUEEN-trained Gaussian Splat Models.
+LiVoGS Compression + Decompression for VideoGS-trained Gaussian Splat Models.
 
 For each frame:
-  1. Load PLY from QUEEN output (not timed)
+  1. Load PLY from VideoGS checkpoint (not timed)
   2. encode_livogs(): Morton → Voxelize → Merge → Position encode → RAHT → Quantize → RLGR
   3. decode_livogs(): RLGR → Dequant → Position decode → RAHT prelude → iRAHT
   4. save_to_ply(): Save reconstructed model to disk (not timed)
@@ -20,19 +20,19 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from tqdm import tqdm
-from plyfile import PlyData, PlyElement
+from plyfile import PlyData
 
 # --- Setup sys.path for LiVoGS imports ---
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
-_QUEEN_ROOT = os.path.dirname(os.path.dirname(_THIS_DIR))
-_LIVOGS_COMPRESSION = os.path.join(_QUEEN_ROOT, "LiVoGS", "compression")
+_VIDEOGS_ROOT = os.path.dirname(os.path.dirname(_THIS_DIR))
+_LIVOGS_COMPRESSION = os.path.join(_VIDEOGS_ROOT, "LiVoGS", "compression")
 if _LIVOGS_COMPRESSION not in sys.path:
     sys.path.insert(0, _LIVOGS_COMPRESSION)
 
 from compress_decompress import encode_livogs, decode_livogs
 
 # ---------------------------------------------------------------------------
-# PLY I/O (QUEEN-compatible)
+# PLY I/O (VideoGS-compatible)
 # ---------------------------------------------------------------------------
 
 def searchForMaxIteration(folder):
@@ -40,33 +40,15 @@ def searchForMaxIteration(folder):
     return max(saved_iters)
 
 
-def find_queen_ply_path(frame_dir):
-    """Find PLY file in a QUEEN frame directory.
+def load_videogs_ply(ply_path, device='cuda'):
+    """Load a VideoGS-trained PLY and return LiVoGS-compatible param dict on GPU.
 
-    Checks canonical point_cloud.ply first, then falls back to per-iteration.
-    """
-    canonical = os.path.join(frame_dir, "point_cloud.ply")
-    if os.path.exists(canonical):
-        return canonical
-    iter_dir = os.path.join(frame_dir, "point_cloud")
-    if os.path.exists(iter_dir):
-        max_iter = searchForMaxIteration(iter_dir)
-        per_iter = os.path.join(iter_dir, f"iteration_{max_iter}", "point_cloud.ply")
-        if os.path.exists(per_iter):
-            return per_iter
-    return None
+    VideoGS PLY attribute order:
+        x, y, z, nx, ny, nz, f_dc_0..2, f_rest_0..44, opacity,
+        scale_0..2, rot_0..3
 
-
-def load_queen_ply(ply_path, device='cuda'):
-    """Load a QUEEN-trained PLY and return LiVoGS-compatible param dict on GPU.
-
-    QUEEN PLY attribute order (SH degree 2):
-        x, y, z, nx, ny, nz, f_dc_0..2, f_rest_0..23, opacity,
-        scale_0..2, rot_0..3, vertex_id (int)
-
-    Normals and vertex_id are ignored.
-    Opacities are stored in logit space → converted to [0,1] via sigmoid.
-    Scales are stored in log space → converted to positive via exp.
+    Normals (nx, ny, nz) are always zero in VideoGS and are ignored.
+    Opacities are converted from logit to [0,1], scales from log to positive.
     """
     plydata = PlyData.read(ply_path)
     vertex = plydata['vertex']
@@ -100,19 +82,23 @@ def load_queen_ply(ply_path, device='cuda'):
         v.numel() * v.element_size() for v in params.values()
     )
 
+    # Normalize quaternions -> Refer to LiVoGS/compression/data_util.py
     params['quats'] = F.normalize(params['quats'], p=2, dim=1)
-    params['opacities'] = torch.sigmoid(params['opacities'])
-    params['scales'] = torch.exp(params['scales'])
+    # Logit → [0, 1]
+    if params['opacities'].min() < 0 or params['opacities'].max() > 1:
+        params['opacities'] = torch.sigmoid(params['opacities'])
+    # Log → positive
+    if params['scales'].min() < 0:
+        params['scales'] = torch.exp(params['scales'])
 
     return params, uncompressed_size_bytes
 
 
-def save_queen_ply(params, output_path, sh_degree=2, eps=1e-6):
-    """Save reconstructed params to QUEEN-compatible PLY.
+def save_videogs_ply(params, output_path, sh_degree=3, eps=1e-6):
+    """Save reconstructed params back to VideoGS-compatible PLY.
 
     Converts opacities back to logit space and scales back to log space so that
-    QUEEN's GaussianModel.load_ply() can consume them directly.
-    Includes vertex_id (int) field to match QUEEN's save_ply format.
+    GaussianModel.load_ply() can consume them directly.
     """
     means = params['means'].detach().cpu().float().numpy()
     quats = params['quats'].detach().cpu().float().numpy()
@@ -122,47 +108,40 @@ def save_queen_ply(params, output_path, sh_degree=2, eps=1e-6):
 
     N = means.shape[0]
 
-    # Convert back to raw (logit / log) space for QUEEN compatibility
+    # Convert back to raw (logit / log) space for VideoGS compatibility
     opacities_c = np.clip(opacities, eps, 1.0 - eps)
     opacities_logit = np.log(opacities_c / (1.0 - opacities_c))
     scales_log = np.log(np.clip(scales, eps, None))
 
-    normals = np.zeros((N, 3), dtype=np.float32)
-    n_dc = 3
-    n_rest = colors.shape[1] - n_dc
-    sh_dc = colors[:, :n_dc]
-    sh_rest = colors[:, n_dc:]
-    vertex_ids = np.arange(N, dtype=np.int32)
-
-    dtype_full = [(attr, 'f4') for attr in ['x', 'y', 'z', 'nx', 'ny', 'nz']]
-    dtype_full.extend([(f'f_dc_{i}', 'f4') for i in range(n_dc)])
-    dtype_full.extend([(f'f_rest_{i}', 'f4') for i in range(n_rest)])
-    dtype_full.append(('opacity', 'f4'))
-    dtype_full.extend([(f'scale_{i}', 'f4') for i in range(3)])
-    dtype_full.extend([(f'rot_{i}', 'f4') for i in range(4)])
-    dtype_full.append(('vertex_id', 'i4'))
-
-    elements = np.empty(N, dtype=dtype_full)
-    elements['x'] = means[:, 0]
-    elements['y'] = means[:, 1]
-    elements['z'] = means[:, 2]
-    elements['nx'] = normals[:, 0]
-    elements['ny'] = normals[:, 1]
-    elements['nz'] = normals[:, 2]
-    for i in range(n_dc):
-        elements[f'f_dc_{i}'] = sh_dc[:, i]
-    for i in range(n_rest):
-        elements[f'f_rest_{i}'] = sh_rest[:, i]
-    elements['opacity'] = opacities_logit.reshape(-1)
+    # Build attribute names matching VideoGS convention
+    attr_names = ['x', 'y', 'z', 'nx', 'ny', 'nz']
     for i in range(3):
-        elements[f'scale_{i}'] = scales_log[:, i]
+        attr_names.append(f'f_dc_{i}')
+    n_rest = colors.shape[1] - 3
+    for i in range(n_rest):
+        attr_names.append(f'f_rest_{i}')
+    attr_names.append('opacity')
+    for i in range(3):
+        attr_names.append(f'scale_{i}')
     for i in range(4):
-        elements[f'rot_{i}'] = quats[:, i]
-    elements['vertex_id'] = vertex_ids
+        attr_names.append(f'rot_{i}')
+
+    normals = np.zeros((N, 3), dtype=np.float32)
+    data = np.concatenate([
+        means, normals, colors,
+        opacities_logit.reshape(-1, 1),
+        scales_log, quats,
+    ], axis=1).astype(np.float32)
 
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
-    el = PlyElement.describe(elements, 'vertex')
-    PlyData([el]).write(output_path)
+    with open(output_path, 'wb') as f:
+        f.write(b"ply\n")
+        f.write(b"format binary_little_endian 1.0\n")
+        f.write(f"element vertex {N}\n".encode())
+        for name in attr_names:
+            f.write(f"property float {name}\n".encode())
+        f.write(b"end_header\n")
+        f.write(data.tobytes())
 
 # ---------------------------------------------------------------------------
 # Main
@@ -170,18 +149,18 @@ def save_queen_ply(params, output_path, sh_degree=2, eps=1e-6):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="LiVoGS compress + decompress for QUEEN-trained models"
+        description="LiVoGS compress + decompress for VideoGS-trained models"
     )
     parser.add_argument("--ply_path", type=str, required=True,
-                        help="Path to QUEEN model output dir (e.g. output/cook_spinach_trained_compressed)")
+                        help="Path to checkpoint dir containing frame folders (0, 1, ...)")
     parser.add_argument("--output_folder", type=str, required=True,
                         help="Folder for benchmark CSV and metadata")
     parser.add_argument("--output_ply_folder", type=str, required=True,
                         help="Folder for decompressed PLY output")
-    parser.add_argument("--frame_start", type=int, default=1)
-    parser.add_argument("--frame_end", type=int, default=300)
+    parser.add_argument("--frame_start", type=int, default=0)
+    parser.add_argument("--frame_end", type=int, default=200)
     parser.add_argument("--interval", type=int, default=1)
-    parser.add_argument("--sh_degree", type=int, default=2)
+    parser.add_argument("--sh_degree", type=int, default=3)
     # LiVoGS-specific parameters
     parser.add_argument("--J", type=int, default=15,
                         help="Octree depth for voxelization (default: 15)")
@@ -260,13 +239,14 @@ if __name__ == "__main__":
     # Warmup GPU
     print("Warmup GPU...")
     frame = args.frame_start
-    frame_str = str(frame).zfill(4)
-    frame_dir = os.path.join(args.ply_path, "frames", frame_str)
-    ply_file_path = find_queen_ply_path(frame_dir)
-    if ply_file_path is None:
-        raise ValueError(f"PLY not found for warmup frame {frame_str} at {frame_dir}")
+    ckpt_path = os.path.join(args.ply_path, str(frame), "point_cloud")
+    if not os.path.exists(ckpt_path):
+        print(f"Warning: Checkpoint not found: {ckpt_path}, skipping frame {frame}")
+        raise ValueError(f"Checkpoint not found: {ckpt_path}")
+    max_iter = searchForMaxIteration(ckpt_path)
+    ply_file_path = os.path.join(ckpt_path, f"iteration_{max_iter}", "point_cloud.ply")
 
-    params, _ = load_queen_ply(ply_file_path, device=device)
+    params, _ = load_videogs_ply(ply_file_path, device=device)
 
     torch.cuda.synchronize(device_id)
     compressed_state = encode_livogs(
@@ -285,17 +265,17 @@ if __name__ == "__main__":
 
     benchmark_rows = []
 
-    for frame in tqdm(range(args.frame_start, args.frame_end + 1, args.interval), desc="Frames"):
+    for frame in tqdm(range(args.frame_start, args.frame_end, args.interval), desc="Frames"):
 
         # --- 1. Load PLY (not timed) ---
-        frame_str = str(frame).zfill(4)
-        frame_dir = os.path.join(args.ply_path, "frames", frame_str)
-        ply_file_path = find_queen_ply_path(frame_dir)
-        if ply_file_path is None:
-            print(f"Warning: PLY not found for frame {frame_str} at {frame_dir}, skipping")
+        ckpt_path = os.path.join(args.ply_path, str(frame), "point_cloud")
+        if not os.path.exists(ckpt_path):
+            print(f"Warning: Checkpoint not found: {ckpt_path}, skipping frame {frame}")
             continue
+        max_iter = searchForMaxIteration(ckpt_path)
+        ply_file_path = os.path.join(ckpt_path, f"iteration_{max_iter}", "point_cloud.ply")
 
-        params, uncompressed_size_bytes = load_queen_ply(ply_file_path, device=device)
+        params, uncompressed_size_bytes = load_videogs_ply(ply_file_path, device=device)
         N_original = params['means'].shape[0]
 
         # --- 2. Encode (timed) ---
@@ -329,10 +309,10 @@ if __name__ == "__main__":
         decode_time_ms = (t_dec_end - t_dec_start) * 1000
 
         # --- 4. Save PLY (not timed) ---
-        frame_ply_dir = os.path.join(args.output_ply_folder, "frames", frame_str)
-        os.makedirs(frame_ply_dir, exist_ok=True)
-        ply_out_path = os.path.join(frame_ply_dir, "point_cloud.ply")
-        save_queen_ply(decoded_params, ply_out_path, args.sh_degree)
+        frame_ply_folder = os.path.join(args.output_ply_folder, str(frame), "point_cloud")
+        os.makedirs(frame_ply_folder, exist_ok=True)
+        ply_out_path = os.path.join(frame_ply_folder, "point_cloud.ply")
+        save_videogs_ply(decoded_params, ply_out_path, args.sh_degree)
 
         benchmark_rows.append({
             "frame": frame,

@@ -17,11 +17,12 @@ def main():
     parser.add_argument("--j", type=int, required=True, help="Octree depth J (e.g. 15)")
     parser.add_argument("--qstep", type=str, required=True, help="Quantization step (e.g. 0.0001)")
     parser.add_argument("--sh_color_space", type=str, required=True, help="Color space (e.g. klt)")
+    parser.add_argument("--nvcomp", type=str, default="ANS", help="nvCOMP algorithm (e.g. ANS, None)")
     parser.add_argument("--output_folder", type=str, required=True,
                         help="Output folder for plot PNG")
     args = parser.parse_args()
 
-    config_name = f"J_{args.j}_qstep_{args.qstep}_{args.sh_color_space}"
+    config_name = f"J_{args.j}_qstep_{args.qstep}_{args.sh_color_space}_nvcomp_{args.nvcomp}"
     config_dir = os.path.join(args.input_folder, config_name)
     evaluation_csv = os.path.join(config_dir, "evaluation", "evaluation_results.csv")
     out_dir = os.path.join(args.output_folder, "plots", args.dataset_name, args.sequence_name, config_name)

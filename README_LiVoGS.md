@@ -2,6 +2,27 @@
 
 Setup and running instructions for LiVoGS on QUEEN trained models.
 
+## Installation
+
+### Dependencies - NvComp
+
+- Tested on Ubuntu 24.04 with CUDA 12.1
+- NVComp 5.1.0.21 (optional, for GPU-accelerated lossless compression):
+  - Download from (NvComp 5.1.0.21)[https://developer.nvidia.com/nvcomp-downloads]
+  - Copy `include/*` to `$CUDA_ROOT/include/`.
+  Example:
+
+  ```bash
+  cp -r nvcomp-linux-x86_64-5.1.0.21_cuda12-archive/include/* cuda-12.1/include/
+  ```
+
+  - Copy `lib/*` to `$CUDA_ROOT/lib64/`.
+  Example:
+
+  ```bash
+  cp -r nvcomp-linux-x86_64-5.1.0.21_cuda12-archive/lib/* cuda-12.1/lib64/
+  ```
+
 ## Setup LiVoGS
 
 ```bash
