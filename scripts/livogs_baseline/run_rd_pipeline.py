@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
-# pyright: reportMissingImports=false, reportMissingTypeStubs=false, reportUnknownVariableType=false, reportUnknownParameterType=false, reportMissingParameterType=false, reportUnknownArgumentType=false, reportUnknownMemberType=false, reportUnknownLambdaType=false, reportAttributeAccessIssue=false, reportArgumentType=false, reportCallIssue=false
 """High-level orchestrator for the LiVoGS per-frame RD experiment pipeline (QUEEN)."""
 
-import csv
 import glob
 import json
 import os
@@ -12,8 +10,6 @@ import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Optional, TypedDict
 
-from numpy import arange
-
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 QUEEN_ROOT = os.path.dirname(os.path.dirname(SCRIPT_DIR))
 if QUEEN_ROOT not in sys.path:
@@ -22,7 +18,6 @@ from scripts.livogs_baseline.rd_pipeline import config
 from scripts.livogs_baseline.rd_pipeline.config import SequenceCfg
 
 from scripts.livogs_baseline.rd_pipeline import qp as _qp
-from scripts.livogs_baseline.rd_pipeline import plot as _plot
 
 
 DATA_PATH = config.DATA_PATH
@@ -67,45 +62,20 @@ RESOLUTION = config.RESOLUTION
 SH_DEGREE = config.SH_DEGREE
 SH_COLOR_SPACE = config.SH_COLOR_SPACE
 RLGR_BLOCK_SIZE = config.RLGR_BLOCK_SIZE
-DEVICE = config.DEVICE
 
 STAGE2_GPUS = [0, 1]
-STAGE2_WORKERS_PER_GPU = 3
+STAGE2_WORKERS_PER_GPU = 12
 STAGE2_ENABLE_IMAGE_SAVING = True
-STAGE2_ENABLE_PLY_SAVING = False
+STAGE2_ENABLE_PLY_SAVING = True
 SKIP_SAVED_EXPERIEMNTS = True
-RUN_EVALUATE = False
-RUN_PLOT = True
 RD_OUTPUT_SUBDIR = "livogs_rd"
 
 EXPERIMENT_BETA_VALUES = [0.0]
 EXPERIMENT_BASELINE_QPS = [v / 255.0 for v in [0.01, 0.1, 0.5, 1, 2, 4, 8, 16]]
-# Stage-2 evaluates this depth list. Plot aggregation may use only a subset
-# selected from PLOTS (see _depths_needed_for_plotting).
-EXPERIMENT_DEPTHS = [12, 13, 14, 15, 16, 17]
-EXPERIMENT_QP_QUATS: list[float] = [0.0001, 0.001, 0.01, 0.02, 0.04, 0.06, 0.1]
-EXPERIMENT_QP_SCALES: list[float] = [0.0001, 0.001, 0.01, 0.02, 0.04, 0.06, 0.1]
-EXPERIMENT_QP_OPACITY: list[float] = [0.0001, 0.001, 0.01, 0.02, 0.04, 0.06, 0.1]
-
-PLOT_PSNR_RANGE: Optional[tuple[float, float]] = None
-
-# Plot specs drive two things:
-# 1) Plot filtering in stage_plot:
-#    - "curve_var" is the sweep variable for separate RD curves.
-#    - "fixed" contains exact-match filters applied before plotting.
-# 2) Aggregation scope in main():
-#    - If curve_var == "depth", aggregate all EXPERIMENT_DEPTHS.
-#    - Otherwise, if fixed contains "depth", aggregate only that depth.
-#    - If fixed omits "depth", aggregate all EXPERIMENT_DEPTHS.
-#
-# Important: any knob not fixed in a spec can still vary in that plot. For
-# example, omitting baseline_qp means all available baseline_qp rows are kept.
-PLOTS: list[dict[str, Any]] = [
-]
-PLOT_CONFIG_JSONS: list[str] = [
-    os.path.join(SCRIPT_DIR, "plot_configs", "default.json"),
-]
-
+EXPERIMENT_DEPTHS = [12, 13, 14, 15, 16, 17, 18]
+EXPERIMENT_QP_QUATS: list[float] = [0.0001, 0.001, 0.01, 0.02, 0.04, 0.06]
+EXPERIMENT_QP_SCALES: list[float] = [0.0001, 0.001, 0.01, 0.02, 0.04, 0.06]
+EXPERIMENT_QP_OPACITY: list[float] = [0.0001, 0.001, 0.01, 0.02, 0.04, 0.06]
 QP_CONFIGS_ROOT = config.QP_CONFIGS_ROOT
 
 
@@ -242,20 +212,6 @@ def _format_config_key_list(keys: set[ConfigKey], max_items: int = 6) -> str:
         summary += f", ... (+{len(ordered) - max_items} more)"
     return summary
 
-
-def _format_value_list(values: set[float], max_items: int = 20) -> str:
-    if not values:
-        return "[]"
-    ordered = sorted(values)
-    shown = ordered[:max_items]
-    summary = "[" + ", ".join([str(v) for v in shown]) + "]"
-    if len(ordered) > max_items:
-        summary += f" ... (+{len(ordered) - max_items} more)"
-    return summary
-
-
-def _to_float_list(values: list[float]) -> list[float]:
-    return [float(v) for v in values]
 
 
 def _normalize_stage2_gpus(gpus: list[int]) -> list[int]:
@@ -616,267 +572,6 @@ def stage_evaluate(seq: SequenceCfg, frame_id: int, depths: list[int]) -> list[s
     return failed
 
 
-def _normalize_plot_fixed_filters(
-    plot_specs: list[dict[str, Any]],
-) -> Optional[list[dict[str, float]]]:
-    normalized: list[dict[str, float]] = []
-
-    for idx, spec in enumerate(plot_specs):
-        fixed = spec.get("fixed", {})
-        if not isinstance(fixed, dict):
-            continue
-        if any(key not in config.KNOB_NAMES for key in fixed.keys()):
-            continue
-
-        normalized_fixed: dict[str, float] = {}
-        for key, raw_value in fixed.items():
-            try:
-                normalized_fixed[key] = round(float(raw_value), 6)
-            except (TypeError, ValueError):
-                print(
-                    f"[WARN] Plot spec #{idx} has non-numeric fixed value for '{key}': "
-                    f"{raw_value!r}. Skipping aggregation prefilter."
-                )
-                return None
-        normalized.append(normalized_fixed)
-
-    return normalized
-
-
-def _row_matches_fixed_constraints(row: dict[str, Any], fixed: dict[str, float]) -> bool:
-    for key, target_value in fixed.items():
-        row_value = row.get(key)
-        if row_value is None:
-            return False
-        try:
-            if round(float(row_value), 6) != target_value:
-                return False
-        except (TypeError, ValueError):
-            return False
-    return True
-
-
-def _filter_aggregate_rows_for_plots(
-    rows: list[dict[str, Any]],
-    plot_specs: Optional[list[dict[str, Any]]],
-) -> list[dict[str, Any]]:
-    if not rows or not plot_specs:
-        return rows
-
-    normalized_fixed_filters = _normalize_plot_fixed_filters(plot_specs)
-    if normalized_fixed_filters is None:
-        return rows
-    if not normalized_fixed_filters:
-        return rows
-
-    return [
-        row
-        for row in rows
-        if any(_row_matches_fixed_constraints(row, fixed) for fixed in normalized_fixed_filters)
-    ]
-
-
-def stage_aggregate(
-    seq: SequenceCfg,
-    frame_id: int,
-    depths: list[int],
-    plot_specs: Optional[list[dict[str, Any]]] = None,
-) -> str:
-    output_root = config.rd_output_root(
-        DATA_PATH,
-        seq["dataset_name"],
-        seq["sequence_name"],
-        rd_subdir_name=RD_OUTPUT_SUBDIR,
-    )
-    all_rows: list[dict[str, Any]] = []
-    for depth in depths:
-        frame_dir = os.path.join(output_root, f"frame_{frame_id}", f"J_{depth}")
-        depth_results = _plot.collect_results(frame_dir, frame_id, depth=depth)
-        all_rows.extend(depth_results)
-
-    collected_count = len(all_rows)
-    all_rows = _filter_aggregate_rows_for_plots(all_rows, plot_specs)
-    filtered_count = len(all_rows)
-
-    csv_path = config.all_results_csv(
-        DATA_PATH,
-        seq["dataset_name"],
-        seq["sequence_name"],
-        frame_id,
-        rd_subdir_name=RD_OUTPUT_SUBDIR,
-    )
-    os.makedirs(os.path.dirname(csv_path), exist_ok=True)
-    fieldnames = [
-        "depth", "baseline_qp", "beta", "qp_quats", "qp_scales", "qp_opacity",
-        "compressed_bytes", "compressed_mb", "decomp_psnr", "gt_psnr", "label",
-    ]
-    with open(csv_path, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
-        writer.writeheader()
-        for row in all_rows:
-            writer.writerow({name: row.get(name, "") for name in fieldnames})
-    if plot_specs:
-        print(
-            f"[INFO] Aggregated {filtered_count}/{collected_count} rows "
-            f"after applying plot fixed-filter union into: {csv_path}"
-        )
-    else:
-        print(f"[INFO] Aggregated {filtered_count} rows into: {csv_path}")
-    return csv_path
-
-
-def _depths_needed_for_plotting(
-    plot_specs: list[dict[str, Any]],
-    experiment_depths: list[int],
-) -> list[int]:
-    """Return the minimal depth set required to satisfy all plot specs."""
-    base_depths: list[int] = []
-    base_seen: set[int] = set()
-    for raw_depth in experiment_depths:
-        depth = int(raw_depth)
-        if depth in base_seen:
-            continue
-        base_seen.add(depth)
-        base_depths.append(depth)
-
-    needs_all_depths = False
-    requested_depths: list[int] = []
-    requested_seen: set[int] = set()
-
-    for spec in plot_specs:
-        curve_var = spec.get("curve_var")
-        fixed = spec.get("fixed", {})
-
-        if curve_var == "depth":
-            needs_all_depths = True
-            continue
-
-        if not isinstance(fixed, dict) or "depth" not in fixed:
-            continue
-
-        try:
-            depth = int(fixed["depth"])
-        except (TypeError, ValueError):
-            continue
-
-        if depth in requested_seen:
-            continue
-        requested_seen.add(depth)
-        requested_depths.append(depth)
-
-    if needs_all_depths or not requested_depths:
-        return base_depths
-
-    selected = [depth for depth in base_depths if depth in requested_seen]
-    for depth in requested_depths:
-        if depth not in base_seen:
-            selected.append(depth)
-    return selected
-
-
-def _parse_one_plot_group(cfg: dict[str, Any], source: str) -> dict[str, Any]:
-    """Parse a single plot-group dict into {source, plots, psnr_range}."""
-    plots: list[dict[str, Any]] = cfg.get("plots", [])
-    raw_range = cfg.get("psnr_range")
-    psnr_range: Optional[tuple[float, float]] = None
-    if isinstance(raw_range, (list, tuple)) and len(raw_range) == 2:
-        try:
-            psnr_range = (float(raw_range[0]), float(raw_range[1]))
-        except (TypeError, ValueError):
-            pass
-    return {"source": source, "plots": plots, "psnr_range": psnr_range}
-
-
-def load_plot_config(json_path: str) -> list[dict[str, Any]]:
-    """Load one or more plot-configuration groups from a JSON file.
-
-    Accepts two formats::
-
-        // Single group
-        {"psnr_range": [min, max] | null, "plots": [...]}
-
-        // Multiple groups in one file
-        [
-            {"psnr_range": ..., "plots": [...]},
-            {"psnr_range": ..., "plots": [...]}
-        ]
-    """
-    with open(json_path, "r", encoding="utf-8") as f:
-        cfg = json.load(f)
-    if isinstance(cfg, list):
-        return [_parse_one_plot_group(entry, json_path) for entry in cfg if isinstance(entry, dict)]
-    return [_parse_one_plot_group(cfg, json_path)]
-
-
-def resolve_plot_groups() -> list[dict[str, Any]]:
-    """Build plot groups: always inline PLOTS, plus any PLOT_CONFIG_JSONS."""
-    groups: list[dict[str, Any]] = []
-    if PLOTS:
-        groups.append({"source": "inline", "plots": PLOTS, "psnr_range": PLOT_PSNR_RANGE})
-    for path in PLOT_CONFIG_JSONS:
-        abs_path = path if os.path.isabs(path) else os.path.join(QUEEN_ROOT, path)
-        if not os.path.isfile(abs_path):
-            print(f"[WARN] Plot config JSON not found: {abs_path}")
-            continue
-        try:
-            loaded = load_plot_config(abs_path)
-        except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
-            print(f"[WARN] Failed to load plot config {abs_path}: {exc}")
-            continue
-        groups.extend(loaded)
-        total_specs = sum(len(g["plots"]) for g in loaded)
-        print(f"[INFO] Loaded plot config: {abs_path} ({len(loaded)} group(s), {total_specs} specs)")
-    if not groups:
-        print("[WARN] No plot specs defined (PLOTS is empty and no config JSONs loaded).")
-    return groups
-
-
-def stage_plot(
-    seq: SequenceCfg,
-    frame_id: int,
-    plot_spec: dict[str, Any],
-    psnr_range: Optional[tuple[float, float]] = None,
-) -> None:
-    csv_path = config.all_results_csv(
-        DATA_PATH,
-        seq["dataset_name"],
-        seq["sequence_name"],
-        frame_id,
-        rd_subdir_name=RD_OUTPUT_SUBDIR,
-    )
-    if not os.path.exists(csv_path):
-        print(f"[WARN] No aggregated CSV found: {csv_path}")
-        return
-    plot_dir = config.plot_output_dir(
-        DATA_PATH,
-        seq["dataset_name"],
-        seq["sequence_name"],
-        rd_subdir_name=RD_OUTPUT_SUBDIR,
-    )
-    curve_var = plot_spec["curve_var"]
-    fixed = plot_spec["fixed"]
-    if curve_var not in config.KNOB_NAMES:
-        print(f"[WARN] Invalid curve_var '{curve_var}'. Expected one of {sorted(config.KNOB_NAMES)}")
-        return
-    invalid_keys = [k for k in fixed if k not in config.KNOB_NAMES]
-    if invalid_keys:
-        print(f"[WARN] Invalid fixed keys {invalid_keys}; skipping.")
-        return
-    fixed_tag = "_".join(f"{k}{v}" for k, v in sorted(fixed.items()))
-    output_path = os.path.join(
-        plot_dir,
-        f"rd_{seq['sequence_name']}_frame{frame_id}_{curve_var}_sweep_{fixed_tag}.png",
-    )
-    _plot.plot_rd(
-        csv_path=csv_path,
-        curve_var=curve_var,
-        fixed=fixed,
-        output_path=output_path,
-        sequence_name=seq["sequence_name"],
-        frame_id=frame_id,
-        psnr_range=psnr_range,
-    )
-
 
 def main() -> None:
     """Run configured RD stages for all sequences/frames."""
@@ -885,7 +580,6 @@ def main() -> None:
     print("LiVoGS RD Pipeline (QUEEN)")
     print(f"  Sequences:  {[s['sequence_name'] for s in SEQUENCES]}")
     print(f"  Frame IDs:  {FRAME_IDS}")
-    print(f"  Stages:     evaluate={RUN_EVALUATE}  plot={RUN_PLOT}")
     print(f"  Stage-2:    gpus={STAGE2_GPUS} workers_per_gpu={STAGE2_WORKERS_PER_GPU} enable_image_saving={STAGE2_ENABLE_IMAGE_SAVING} enable_ply_saving={STAGE2_ENABLE_PLY_SAVING}")
     print(f"  Stage-2:    skip_saved_experiemnts={SKIP_SAVED_EXPERIEMNTS}")
     print(f"  Raw root:   {RAW_DATA_ROOT}")
@@ -899,20 +593,11 @@ def main() -> None:
         f"  Attr QPs:   quats={EXPERIMENT_QP_QUATS} scales={EXPERIMENT_QP_SCALES} "
         f"opacity={EXPERIMENT_QP_OPACITY}"
     )
-    plot_groups = resolve_plot_groups() if RUN_PLOT else []
-    print(f"  Plotting:   {len(plot_groups)} group(s), config_jsons={PLOT_CONFIG_JSONS or '(inline)'}")
-    for gi, group in enumerate(plot_groups):
-        gd = _depths_needed_for_plotting(group["plots"], EXPERIMENT_DEPTHS)
-        print(
-            f"    [{gi}] source={group['source']}, specs={len(group['plots'])}, "
-            f"psnr_range={group['psnr_range']}, depths={gd}"
-        )
     print(sep)
 
-    if RUN_EVALUATE:
-        if not ensure_experiment_configs():
-            print("[ERROR] Cannot continue: experiment QP config requirements are not satisfied.")
-            raise SystemExit(1)
+    if not ensure_experiment_configs():
+        print("[ERROR] Cannot continue: experiment QP config requirements are not satisfied.")
+        raise SystemExit(1)
 
     all_failures: list[str] = []
 
@@ -922,23 +607,10 @@ def main() -> None:
             print(f"Sequence: {seq['sequence_name']}  |  Frame: {frame_id}")
             print(sep)
 
-            if RUN_EVALUATE:
-                failed = stage_evaluate(seq, frame_id, EXPERIMENT_DEPTHS)
-                if failed:
-                    all_failures += [f"{seq['sequence_name']}/frame_{frame_id}/{f}" for f in failed]
+            failed = stage_evaluate(seq, frame_id, EXPERIMENT_DEPTHS)
+            if failed:
+                all_failures += [f"{seq['sequence_name']}/frame_{frame_id}/{f}" for f in failed]
 
-            if RUN_PLOT:
-                if RUN_EVALUATE and not STAGE2_ENABLE_IMAGE_SAVING:
-                    print(
-                        "[WARN] Stage-2 fast mode skips quality evaluation for new runs; "
-                        "Stage 3 plotting will only use experiments that already have "
-                        "evaluation/evaluation_results.json."
-                    )
-                for group in plot_groups:
-                    group_depths = _depths_needed_for_plotting(group["plots"], EXPERIMENT_DEPTHS)
-                    stage_aggregate(seq, frame_id, group_depths, plot_specs=group["plots"])
-                    for plot_spec in group["plots"]:
-                        stage_plot(seq, frame_id, plot_spec, psnr_range=group["psnr_range"])
 
     print(f"\n{sep}")
     print("Pipeline complete.")
