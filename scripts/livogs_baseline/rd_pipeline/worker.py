@@ -103,7 +103,7 @@ def main() -> None:
     print(f"  Frames:        {args.frame_start}..{args.frame_end} (interval={args.interval})")
     print(f"  Device:        {args.device}")
     if qp_label and qp_data is not None:
-        print(f"  QP label:      {qp_label} (beta={qp_data['beta']}, baseline_qp={qp_data['baseline_qp']})")
+        print(f"  QP label:      {qp_label} (beta={qp_data['beta']}, qp_sh={qp_data['qp_sh']})")
     else:
         print(f"  J:             {args.j} | quantize_step: {args.quantize_step} | color space: {args.sh_color_space}")
     print("=" * 70)

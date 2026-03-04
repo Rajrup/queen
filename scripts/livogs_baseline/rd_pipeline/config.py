@@ -146,4 +146,4 @@ def all_results_csv(
     )
 
 
-KNOB_NAMES = frozenset({"depth", "baseline_qp", "beta", "qp_quats", "qp_scales", "qp_opacity"})
+KNOB_NAMES = frozenset({"depth", "qp_sh", "beta", "qp_quats", "qp_scales", "qp_opacity"})

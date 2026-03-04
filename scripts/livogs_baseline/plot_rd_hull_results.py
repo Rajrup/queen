@@ -24,20 +24,16 @@ RD_OUTPUT_ROOTS: list[dict[str, Any]] = [
     },
 ]
 
-DEPTH_VALUES = [12, 13, 14, 15, 16, 17, 18]
-SH_VALUES = [v / 255.0 for v in (0.01, 0.1, 0.5, 1, 2, 4, 8, 16)]
-ATTR_VALUES = [0.001, 0.01, 0.02, 0.04, 0.06]
-
 SCATTER_PSNR_RANGE: Optional[tuple[float, float]] = None
 
 SCATTER_SPEC: dict[str, Any] = {
-    "name": "expected_ranges",
+    "name": "default_qps",
     "fixed": {
-        "depth": DEPTH_VALUES,
-        "baseline_qp": SH_VALUES,
-        "qp_opacity": ATTR_VALUES,
-        "qp_scales": ATTR_VALUES,
-        "qp_quats": ATTR_VALUES,
+        "depth": [12, 13, 14, 15, 16, 17, 18],
+        "qp_sh": [v / 255.0 for v in (0.01, 0.1, 0.5, 1, 2, 4, 8, 16)],
+        "qp_opacity": [0.001, 0.01, 0.02, 0.04, 0.06],
+        "qp_scales": [0.001, 0.01, 0.02, 0.04, 0.06],
+        "qp_quats": [0.001, 0.01, 0.02, 0.04, 0.06],
     },
 }
 
@@ -45,7 +41,7 @@ DEFAULT_PSNR_RANGE: Optional[tuple[float, float]] = None
 PLOT_OUTPUT_DIR: Optional[str] = None
 COLLECTED_CSV: Optional[str] = None
 
-KNOB_NAMES = frozenset({"depth", "baseline_qp", "beta", "qp_quats", "qp_scales", "qp_opacity"})
+KNOB_NAMES = frozenset({"depth", "qp_sh", "beta", "qp_quats", "qp_scales", "qp_opacity"})
 
 
 def _normalize_psnr_range(raw_range: Any) -> Optional[tuple[float, float]]:
@@ -183,7 +179,7 @@ def _expected_missing_combos(
     frame_rows: list[dict[str, Any]],
     fixed: dict[str, Any],
 ) -> tuple[list[str], set[tuple[float, ...]], set[tuple[float, ...]], set[tuple[float, ...]]]:
-    combo_keys = ["depth", "baseline_qp", "qp_opacity", "qp_scales", "qp_quats"]
+    combo_keys = ["depth", "qp_sh", "qp_opacity", "qp_scales", "qp_quats"]
     if not all(k in fixed for k in combo_keys):
         missing_keys = [k for k in combo_keys if k not in fixed]
         return missing_keys, set(), set(), set()
@@ -223,7 +219,7 @@ def _write_missing_report_csv(
         "sequence_name",
         "frame_id",
         "depth",
-        "baseline_qp",
+        "qp_sh",
         "sh_times_255",
         "qp_opacity",
         "qp_scales",
@@ -233,15 +229,15 @@ def _write_missing_report_csv(
     with open(output_path, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
-        for depth, baseline_qp, qp_opacity, qp_scales, qp_quats in sorted(missing):
+        for depth, qp_sh, qp_opacity, qp_scales, qp_quats in sorted(missing):
             writer.writerow(
                 {
                     "dataset_name": dataset_name,
                     "sequence_name": sequence_name,
                     "frame_id": frame_id,
                     "depth": int(round(depth)),
-                    "baseline_qp": f"{baseline_qp:.6g}",
-                    "sh_times_255": f"{(baseline_qp * 255.0):.6g}",
+                    "qp_sh": f"{qp_sh:.6g}",
+                    "sh_times_255": f"{(qp_sh * 255.0):.6g}",
                     "qp_opacity": f"{qp_opacity:.6g}",
                     "qp_scales": f"{qp_scales:.6g}",
                     "qp_quats": f"{qp_quats:.6g}",
@@ -309,6 +305,8 @@ def generate_scatter_plots(
             parsed = dict(row)
             for key in KNOB_NAMES:
                 raw = parsed.get(key)
+                if key == "qp_sh" and raw in (None, ""):
+                    raw = parsed.get("qp_sh", parsed.get("qp_sh"))
                 if raw in (None, ""):
                     parsed[key] = None
                 else:

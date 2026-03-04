@@ -51,7 +51,6 @@ RD_OUTPUT_ROOTS: list[dict[str, Any]] = [
 #   "curve_var" — the knob to sweep (separate RD curve per value)
 #   "fixed"     — dict of knob=value filters applied before plotting
 #
-# Valid knob names: depth, baseline_qp, beta, qp_quats, qp_scales, qp_opacity
 PLOT_GROUPS: list[dict[str, Any]] = [
     # Example: sweep qp_opacity while fixing other knobs
     # {
@@ -182,7 +181,8 @@ def collect_all() -> list[dict[str, str]]:
 # Plotting
 # ---------------------------------------------------------------------------
 
-KNOB_NAMES = frozenset({"depth", "baseline_qp", "beta", "qp_quats", "qp_scales", "qp_opacity"})
+KNOB_NAMES = frozenset({"depth", "qp_sh", "beta", "qp_quats", "qp_scales", "qp_opacity"})
+CONFIG_KNOB_NAMES = KNOB_NAMES
 
 
 def generate_plots(csv_path: str, plot_dir: str, plot_groups: list[dict[str, Any]]) -> None:
@@ -207,10 +207,10 @@ def generate_plots(csv_path: str, plot_dir: str, plot_groups: list[dict[str, Any
             raw_fixed = plot_spec.get("fixed", {})
             curve_values = plot_spec.get("curve_values")
 
-            if curve_var not in KNOB_NAMES:
+            if curve_var not in CONFIG_KNOB_NAMES:
                 print(f"[WARN] Invalid curve_var '{curve_var}'; skipping.")
                 continue
-            invalid_keys = [k for k in raw_fixed if k not in KNOB_NAMES]
+            invalid_keys = [k for k in raw_fixed if k not in CONFIG_KNOB_NAMES]
             if invalid_keys:
                 print(f"[WARN] Invalid fixed keys {invalid_keys}; skipping.")
                 continue

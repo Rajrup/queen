@@ -92,22 +92,22 @@ def compute_energy_rms(
 def generate_qp_sets(
     rms: np.ndarray[Any, Any],
     rms_max: float,
-    baseline_qps: list[float],
+    qp_sh_values: list[float],
     beta_values: list[float],
 ) -> list[dict[str, Any]]:
-    """Generate QP sets for all (baseline_qp, beta) combinations."""
+    """Generate QP sets for all (qp_sh, beta) combinations."""
     safe_rms = np.where(rms > 0, rms, rms.max() * 1e-6)
     qp_sets: list[dict[str, Any]] = []
     set_id = 0
-    for baseline_qp in baseline_qps:
+    for qp_sh in qp_sh_values:
         for beta in beta_values:
-            qps = baseline_qp * (rms_max / safe_rms) ** beta
+            qps = qp_sh * (rms_max / safe_rms) ** beta
             qp_sets.append(
                 {
                     "id": set_id,
-                    "label": f"qp{baseline_qp}_beta_{beta:.1f}",
+                    "label": f"qp{qp_sh}_beta_{beta:.1f}",
                     "values": qps.tolist(),
-                    "baseline_qp": baseline_qp,
+                    "qp_sh": qp_sh,
                     "beta": beta,
                 }
             )
@@ -141,7 +141,7 @@ def create_quantize_config(
 def generate(
     sequences: list[config.SequenceCfg],
     frame_ids: list[int],
-    baseline_qps: list[float],
+    qp_sh_values: list[float],
     beta_values: list[float],
     output_root: str = config.QP_CONFIGS_ROOT,
     data_path: str = config.DATA_PATH,
@@ -190,7 +190,7 @@ def generate(
             rms, rms_max = compute_energy_rms(ply_path, j, device)
             print(f"  RMS: shape={rms.shape}  min={rms.min():.4f}  max={rms_max:.4f}")
 
-            qp_sets = generate_qp_sets(rms, rms_max, baseline_qps, beta_values)
+            qp_sets = generate_qp_sets(rms, rms_max, qp_sh_values, beta_values)
 
             _qp_quats = qp_quats_list or [config.BASELINE_QUANTIZE_STEP["quats"]]
             _qp_scales = qp_scales_list or [config.BASELINE_QUANTIZE_STEP["scales"]]
@@ -209,10 +209,10 @@ def generate(
                                 qp_scales=qp_scales,
                                 qp_opacity=qp_opacity,
                             )
-                            label = f"qp{qp_set['baseline_qp']}_b{qp_set['beta']:.1f}_q{qp_quats}_s{qp_scales}_o{qp_opacity}"
+                            label = f"qp{qp_set['qp_sh']}_b{qp_set['beta']:.1f}_q{qp_quats}_s{qp_scales}_o{qp_opacity}"
                             payload = {
                                 "label": label,
-                                "baseline_qp": qp_set["baseline_qp"],
+                                "qp_sh": qp_set["qp_sh"],
                                 "beta": qp_set["beta"],
                                 "qp_quats": qp_quats,
                                 "qp_scales": qp_scales,
@@ -266,7 +266,7 @@ _STANDALONE_SEQUENCES: list[config.SequenceCfg] = [
     },
 ]
 
-_STANDALONE_BASELINE_QPS = [0.001, 0.005, 0.01, 0.02, 0.03, 0.04]
+_STANDALONE_QP_SH_VALUES = [0.001, 0.005, 0.01, 0.02, 0.03, 0.04]
 _STANDALONE_BETA_VALUES = [0.0, 0.4, 0.8, 1.0, 1.2, 1.6, 2.0]
 _STANDALONE_FRAME_IDS = [1]
 
@@ -278,7 +278,7 @@ if __name__ == "__main__":
     )
     parser.add_argument("--output_dir", default=None,
                         help="Override output root (absolute path)")
-    parser.add_argument("--baseline_qps", nargs="+", type=float, default=None,
+    parser.add_argument("--qp_sh_values", nargs="+", type=float, default=None,
                         help="Override baseline QPs (space-separated floats)")
     parser.add_argument("--beta_values", nargs="+", type=float, default=None,
                         help="Override beta values (space-separated floats)")
@@ -297,7 +297,7 @@ if __name__ == "__main__":
     generate(
         sequences=_STANDALONE_SEQUENCES,
         frame_ids=args.frame_ids or _STANDALONE_FRAME_IDS,
-        baseline_qps=args.baseline_qps or _STANDALONE_BASELINE_QPS,
+        qp_sh_values=args.qp_sh_values or _STANDALONE_QP_SH_VALUES,
         beta_values=args.beta_values or _STANDALONE_BETA_VALUES,
         output_root=args.output_dir or config.QP_CONFIGS_ROOT,
         selected_qp_dir_names=args.qp_dir_names,

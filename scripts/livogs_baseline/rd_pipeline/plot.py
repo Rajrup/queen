@@ -18,7 +18,7 @@ ResultRow = dict[str, Any]
 
 NUMERIC_COLUMNS = (
     "depth",
-    "baseline_qp",
+    "qp_sh",
     "beta",
     "qp_quats",
     "qp_scales",
@@ -35,18 +35,17 @@ HULL_CSV_COLUMNS = (
     "qp_opacity",
     "qp_scales",
     "qp_quats",
-    "baseline_qp",
+    "qp_sh",
     "depth",
 )
 
 DEDUP_COMBO_KEYS = (
     "depth",
-    "baseline_qp",
+    "qp_sh",
     "qp_opacity",
     "qp_scales",
     "qp_quats",
 )
-
 
 def load_experiment_result(exp_dir: str, frame_id: int) -> Optional[ResultRow]:
     qp_config_path = os.path.join(exp_dir, "qp_config.json")
@@ -98,18 +97,18 @@ def load_experiment_result(exp_dir: str, frame_id: int) -> Optional[ResultRow]:
 
     quantize_cfg = qp_config.get("quantize_config", {})
     try:
-        baseline_qp = float(qp_config["baseline_qp"])
+        qp_sh = float(qp_config.get("qp_sh", qp_config.get("sh_qp", qp_config.get("baseline_qp"))))
         beta = float(qp_config["beta"])
         qp_quats = float(qp_config.get("qp_quats", quantize_cfg.get("quats")))
         qp_scales = float(qp_config.get("qp_scales", quantize_cfg.get("scales")))
         qp_opacity = float(qp_config.get("qp_opacity", quantize_cfg.get("opacity")))
     except (KeyError, TypeError, ValueError):
-        print(f"  [SKIP] Missing/invalid baseline_qp, beta, or attr qps in {os.path.basename(exp_dir)}")
+        print(f"  [SKIP] Missing/invalid qp_sh, beta, or attr qps in {os.path.basename(exp_dir)}")
         return None
 
     return {
         "label": str(qp_config.get("label", os.path.basename(exp_dir))),
-        "baseline_qp": baseline_qp,
+        "qp_sh": qp_sh,
         "beta": beta,
         "qp_quats": qp_quats,
         "qp_scales": qp_scales,
