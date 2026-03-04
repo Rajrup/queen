@@ -25,6 +25,11 @@ def load_benchmark_csv(path):
                 "compressed_size_bytes": int(row["compressed_size_bytes"]),
                 "original_points": int(row["original_points"]),
                 "voxelized_points": int(row["voxelized_points"]),
+                "quats_compressed_bytes": int(row.get("quats_compressed_bytes", 0)),
+                "scales_compressed_bytes": int(row.get("scales_compressed_bytes", 0)),
+                "opacity_compressed_bytes": int(row.get("opacity_compressed_bytes", 0)),
+                "sh_dc_compressed_bytes": int(row.get("sh_dc_compressed_bytes", 0)),
+                "sh_rest_compressed_bytes": int(row.get("sh_rest_compressed_bytes", 0)),
             })
     return sorted(rows, key=lambda x: x["frame"])
 
@@ -89,6 +94,53 @@ def main():
     fig.savefig(size_path, dpi=150)
     print(f"Saved: {size_path}")
     plt.close(fig)
+
+    # ---- Plot 1b: Per-attribute size breakdown (stacked area) ----
+    has_breakdown = any(r["quats_compressed_bytes"] > 0 for r in rows)
+    if has_breakdown:
+        pos_mb_s = [r["position_compressed_bytes"] / 1024 / 1024 for r in rows]
+        quats_mb = [r["quats_compressed_bytes"] / 1024 / 1024 for r in rows]
+        scales_mb = [r["scales_compressed_bytes"] / 1024 / 1024 for r in rows]
+        opacity_mb = [r["opacity_compressed_bytes"] / 1024 / 1024 for r in rows]
+        sh_dc_mb = [r["sh_dc_compressed_bytes"] / 1024 / 1024 for r in rows]
+        sh_rest_mb = [r["sh_rest_compressed_bytes"] / 1024 / 1024 for r in rows]
+
+        avg_quats = sum(quats_mb) / n
+        avg_scales = sum(scales_mb) / n
+        avg_opacity = sum(opacity_mb) / n
+        avg_sh_dc = sum(sh_dc_mb) / n
+        avg_sh_rest = sum(sh_rest_mb) / n
+        avg_pos_s = sum(pos_mb_s) / n
+
+        fig, ax = plt.subplots(figsize=(12, 5))
+        ax.stackplot(
+            x,
+            pos_mb_s, quats_mb, scales_mb, opacity_mb, sh_dc_mb, sh_rest_mb,
+            labels=[
+                f"Position (avg {avg_pos_s:.3f} MB)",
+                f"Quats (avg {avg_quats:.3f} MB)",
+                f"Scales (avg {avg_scales:.3f} MB)",
+                f"Opacity (avg {avg_opacity:.3f} MB)",
+                f"SH DC (avg {avg_sh_dc:.3f} MB)",
+                f"SH Rest (avg {avg_sh_rest:.3f} MB)",
+            ],
+            colors=["seagreen", "steelblue", "coral", "goldenrod", "mediumpurple", "lightcoral"],
+            alpha=0.85,
+        )
+        ax.set_xlabel("Frame")
+        ax.set_ylabel("Size (MB)")
+        ax.set_title(f"LiVoGS per-attribute size breakdown [{config_name}, {args.dataset_name}, {args.sequence_name}]")
+        ax.set_ylim(bottom=0)
+        ax.set_xticks(list(x)[::tick_every])
+        ax.set_xticklabels(frame_ids[::tick_every], rotation=90)
+        ax.legend(fontsize=8, loc="upper right")
+        ax.grid(True, alpha=0.3)
+
+        fig.tight_layout()
+        attr_path = os.path.join(out_dir, "compressed_size_breakdown.png")
+        fig.savefig(attr_path, dpi=150)
+        print(f"Saved: {attr_path}")
+        plt.close(fig)
 
     # ---- Plot 2: Point counts ----
     orig_pts = [r["original_points"] for r in rows]
