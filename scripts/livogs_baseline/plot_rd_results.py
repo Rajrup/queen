@@ -72,6 +72,7 @@ PLOT_CONFIG_JSONS: list[str] = [
 PLOT_OUTPUT_DIR: Optional[str] = None
 
 COLLECTED_CSV: Optional[str] = None
+FORCE_COLLECT: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -152,6 +153,15 @@ def collect_all() -> list[dict[str, str]]:
                 csv_path = COLLECTED_CSV
             else:
                 csv_path = _default_collected_csv(rd_root)
+
+        if not FORCE_COLLECT and os.path.exists(csv_path):
+            print(f"  CSV already exists, skipping collect: {csv_path}")
+            collected.append({
+                "rd_root": rd_root,
+                "sequence_name": seq_name,
+                "csv_path": csv_path,
+            })
+            continue
 
         print(f"Collecting: {seq_name}  ({rd_root})")
         rows = collect_rd_root(rd_root, seq_name, frame_ids=frame_ids)
