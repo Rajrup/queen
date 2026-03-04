@@ -29,6 +29,24 @@ NUMERIC_COLUMNS = (
     "gt_psnr",
 )
 
+HULL_CSV_COLUMNS = (
+    "compressed_mb",
+    "decomp_psnr",
+    "qp_opacity",
+    "qp_scales",
+    "qp_quats",
+    "baseline_qp",
+    "depth",
+)
+
+DEDUP_COMBO_KEYS = (
+    "depth",
+    "baseline_qp",
+    "qp_opacity",
+    "qp_scales",
+    "qp_quats",
+)
+
 
 def load_experiment_result(exp_dir: str, frame_id: int) -> Optional[ResultRow]:
     qp_config_path = os.path.join(exp_dir, "qp_config.json")
@@ -170,6 +188,42 @@ def _parse_fixed_pairs(fixed_pairs: list[str]) -> dict[str, float]:
             raise ValueError(f"Invalid --fixed item: {pair!r}. Empty key")
         fixed[key] = float(value)
     return fixed
+
+
+def _round6(value: float) -> float:
+    return round(float(value), 6)
+
+
+def _is_better_row(candidate: dict[str, Any], current: dict[str, Any]) -> bool:
+    cand_psnr = float(candidate.get("decomp_psnr") or -1e18)
+    cur_psnr = float(current.get("decomp_psnr") or -1e18)
+    if cand_psnr > cur_psnr + 1e-12:
+        return True
+    if cur_psnr > cand_psnr + 1e-12:
+        return False
+
+    cand_size = float(candidate.get("compressed_mb") or 1e18)
+    cur_size = float(current.get("compressed_mb") or 1e18)
+    return cand_size < cur_size - 1e-12
+
+
+def _deduplicate_operating_points(rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], int]:
+    best_by_combo: dict[tuple[float, ...], dict[str, Any]] = {}
+    passthrough: list[dict[str, Any]] = []
+
+    for row in rows:
+        if any(row.get(k) is None for k in DEDUP_COMBO_KEYS):
+            passthrough.append(row)
+            continue
+        combo = tuple(_round6(float(row[k])) for k in DEDUP_COMBO_KEYS)
+        prev = best_by_combo.get(combo)
+        if prev is None or _is_better_row(row, prev):
+            best_by_combo[combo] = row
+
+    deduped = list(best_by_combo.values()) + passthrough
+    removed = len(rows) - len(deduped)
+    deduped.sort(key=lambda r: float(r.get("compressed_mb") or 1e18))
+    return deduped, removed
 
 
 
@@ -317,6 +371,159 @@ def plot_rd(
     fig.savefig(output_path, dpi=150)
     plt.close(fig)
     print(f"Saved plot: {output_path}")
+
+
+def _write_hull_csv(
+    hull_pts: list[tuple[float, float]],
+    point_to_row: dict[tuple[float, float], dict[str, Any]],
+    hull_csv_path: str,
+) -> None:
+    """Write convex-hull operating points to a CSV for later lookup."""
+    os.makedirs(os.path.dirname(os.path.abspath(hull_csv_path)), exist_ok=True)
+    with open(hull_csv_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=HULL_CSV_COLUMNS)
+        writer.writeheader()
+        for pt in hull_pts:
+            row = point_to_row.get(pt, {})
+            writer.writerow({col: row.get(col, "") for col in HULL_CSV_COLUMNS})
+    print(f"Saved hull CSV ({len(hull_pts)} points): {hull_csv_path}")
+
+
+def plot_rd_scatter(
+    csv_path: str,
+    output_path: str,
+    sequence_name: str,
+    frame_id: int,
+    hull_csv_path: Optional[str] = None,
+    psnr_range: Optional[tuple[float, float]] = None,
+    fixed: Optional[dict[str, Any]] = None,
+    deduplicate: bool = False,
+) -> None:
+    """Scatter-plot all RD operating points with upper convex hull.
+
+    Unlike :func:`plot_rd` this does **not** group by a sweep variable —
+    every matching row becomes a single dot.  The upper convex hull is
+    overlaid and, when *hull_csv_path* is given, its vertices are exported
+    to a CSV for downstream lookup.
+    """
+    if not os.path.exists(csv_path):
+        print(f"[WARN] CSV not found: {csv_path}")
+        return
+
+    # ---- load rows ----
+    rows: list[dict[str, Any]] = []
+    with open(csv_path, newline="", encoding="utf-8") as f:
+        for row in csv.DictReader(f):
+            try:
+                parsed = _parse_numeric_columns(row)
+            except (TypeError, ValueError):
+                continue
+            rows.append(parsed)
+
+    if not rows:
+        print(f"[WARN] No rows loaded from: {csv_path}")
+        return
+
+    # ---- filter by sequence / frame ----
+    filtered: list[dict[str, Any]] = [
+        r for r in rows
+        if r.get("sequence_name") == sequence_name
+        and r.get("frame_id") is not None
+        and int(r["frame_id"]) == frame_id
+    ]
+
+    # ---- optional fixed-knob filter ----
+    if fixed:
+        kept: list[dict[str, Any]] = []
+        for row in filtered:
+            keep = True
+            for key, target in fixed.items():
+                row_val = row.get(key)
+                if row_val is None:
+                    keep = False
+                    break
+                if isinstance(target, (list, tuple)):
+                    if not any(
+                        round(float(row_val), 6) == round(float(tv), 6)
+                        for tv in target
+                    ):
+                        keep = False
+                        break
+                else:
+                    if round(float(row_val), 6) != round(float(target), 6):
+                        keep = False
+                        break
+            if keep:
+                kept.append(row)
+        filtered = kept
+
+    # ---- extract valid (x, y) points ----
+    valid = [
+        r for r in filtered
+        if r.get("compressed_mb") is not None and r.get("decomp_psnr") is not None
+    ]
+    if not valid:
+        print(f"[WARN] No valid points for {sequence_name} frame {frame_id}")
+        return
+
+    if deduplicate:
+        valid, removed = _deduplicate_operating_points(valid)
+        if removed > 0:
+            print(
+                f"[INFO] Removed {removed} redundant rows for "
+                f"{sequence_name} frame {frame_id} before plotting"
+            )
+
+    x = [float(r["compressed_mb"]) for r in valid]
+    y = [float(r["decomp_psnr"]) for r in valid]
+
+    # map (x, y) → row so hull vertices can be exported with full metadata
+    point_to_row: dict[tuple[float, float], dict[str, Any]] = {}
+    for r in valid:
+        pt = (float(r["compressed_mb"]), float(r["decomp_psnr"]))
+        point_to_row.setdefault(pt, r)
+
+    # ---- plot ----
+    fig, ax = plt.subplots(figsize=(9, 6))
+    ax.scatter(x, y, s=12, alpha=0.6, zorder=2,
+               label=f"All points ({len(valid)})")
+
+    hull_pts: list[tuple[float, float]] = []
+    if len(set(zip(x, y))) >= 2:
+        hull_pts = _upper_convex_hull(list(zip(x, y)))
+        if len(hull_pts) >= 2:
+            hx = [p[0] for p in hull_pts]
+            hy = [p[1] for p in hull_pts]
+            ax.plot(hx, hy, color="red", linewidth=2.5, linestyle="-",
+                    marker="D", markersize=5,
+                    label=f"Convex hull ({len(hull_pts)} pts)", zorder=3)
+
+    gt_psnr = next(
+        (r.get("gt_psnr") for r in valid if r.get("gt_psnr") is not None), None
+    )
+    if gt_psnr is not None:
+        gt_val = float(gt_psnr)
+        ax.axhline(gt_val, color="black", linestyle="--", linewidth=1.4,
+                   label=f"Uncompressed ({gt_val:.2f} dB)")
+
+    normalized_psnr_range = _normalize_psnr_range(psnr_range)
+    ax.set_xlabel("Compressed size (MB)")
+    ax.set_ylabel("PSNR (dB)")
+    if normalized_psnr_range is not None:
+        ax.set_ylim(normalized_psnr_range)
+    ax.set_title(f"RD Scatter — {sequence_name} frame {frame_id}")
+    ax.grid(True, alpha=0.3)
+    ax.legend(fontsize=8)
+    fig.tight_layout()
+
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    fig.savefig(output_path, dpi=150)
+    plt.close(fig)
+    print(f"Saved scatter plot: {output_path}")
+
+    # ---- export hull CSV ----
+    if hull_csv_path and hull_pts:
+        _write_hull_csv(hull_pts, point_to_row, hull_csv_path)
 
 
 def main() -> None:
