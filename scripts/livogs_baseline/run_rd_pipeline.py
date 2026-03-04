@@ -8,7 +8,7 @@ import shutil
 import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Any, Optional, TypedDict
+from typing import Optional, TypedDict
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 QUEEN_ROOT = os.path.dirname(os.path.dirname(SCRIPT_DIR))
@@ -62,13 +62,14 @@ RESOLUTION = config.RESOLUTION
 SH_DEGREE = config.SH_DEGREE
 SH_COLOR_SPACE = config.SH_COLOR_SPACE
 RLGR_BLOCK_SIZE = config.RLGR_BLOCK_SIZE
+NVCOMP_ALGORITHM = "ANS"
 
 STAGE2_GPUS = [0, 1]
-STAGE2_WORKERS_PER_GPU = 12
+STAGE2_WORKERS_PER_GPU = 24
 STAGE2_ENABLE_IMAGE_SAVING = True
 STAGE2_ENABLE_PLY_SAVING = True
 SKIP_SAVED_EXPERIEMNTS = True
-RD_OUTPUT_SUBDIR = "livogs_rd"
+RD_OUTPUT_SUBDIR = "livogs_rd_nvcomp"
 
 EXPERIMENT_BETA_VALUES = [0.0]
 EXPERIMENT_BASELINE_QPS = [v / 255.0 for v in [0.01, 0.1, 0.5, 1, 2, 4, 8, 16]]
@@ -506,6 +507,8 @@ def stage_evaluate(seq: SequenceCfg, frame_id: int, depths: list[int]) -> list[s
                 json_path,
                 "--device",
                 "cuda:0",
+                "--nvcomp_algorithm",
+                str(NVCOMP_ALGORITHM) if NVCOMP_ALGORITHM is not None else "None",
             ]
             if not STAGE2_ENABLE_PLY_SAVING:
                 cmd.append("--disable_ply_saving")
@@ -593,6 +596,7 @@ def main() -> None:
         f"  Attr QPs:   quats={EXPERIMENT_QP_QUATS} scales={EXPERIMENT_QP_SCALES} "
         f"opacity={EXPERIMENT_QP_OPACITY}"
     )
+    print(f"  nvCOMP:     {NVCOMP_ALGORITHM if NVCOMP_ALGORITHM else 'none'}")
     print(sep)
 
     if not ensure_experiment_configs():

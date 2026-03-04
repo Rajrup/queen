@@ -26,6 +26,7 @@ RESOLUTION = 2
 SH_DEGREE = 2  # QUEEN uses SH degree 2 (27 coefficients total)
 SH_COLOR_SPACE = "klt"
 RLGR_BLOCK_SIZE = 4096
+NVCOMP_ALGORITHM: str | None = None
 J = 15
 DEVICE = "cuda:0"
 

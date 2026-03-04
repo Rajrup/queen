@@ -152,6 +152,7 @@ def compress_decompress(
     rlgr_block_size: int = config.RLGR_BLOCK_SIZE,
     device: str = config.DEVICE,
     skip_save_ply: bool = False,
+    nvcomp_algorithm: Optional[str] = config.NVCOMP_ALGORITHM,
 ) -> list[dict[str, Any]]:
     """Run LiVoGS compress + decompress for an inclusive QUEEN frame range."""
     if quantize_step is None:
@@ -190,6 +191,7 @@ def compress_decompress(
     )
     print(f"  SH color space:     {sh_color_space}")
     print(f"  RLGR block size:    {rlgr_block_size}")
+    print(f"  nvCOMP algorithm:   {nvcomp_algorithm if nvcomp_algorithm else 'none'}")
     print("=" * 70)
 
     print("Warmup GPU...")
@@ -208,6 +210,7 @@ def compress_decompress(
         sh_color_space=sh_color_space,
         quantize_step=quantize_step,
         rlgr_block_size=rlgr_block_size,
+        nvcomp_algorithm=nvcomp_algorithm,
     )
     torch.cuda.synchronize(device_id)
     decode_livogs(compressed_state, device=device, device_id=device_id)
@@ -233,6 +236,7 @@ def compress_decompress(
             sh_color_space=sh_color_space,
             quantize_step=quantize_step,
             rlgr_block_size=rlgr_block_size,
+            nvcomp_algorithm=nvcomp_algorithm,
         )
         torch.cuda.synchronize(device_id)
         t_enc_end = time.perf_counter()
@@ -319,6 +323,7 @@ def compress_decompress(
             "frame_start": frame_start,
             "frame_end": frame_end,
             "interval": interval,
+            "nvcomp_algorithm": nvcomp_algorithm,
         }
         with open(os.path.join(output_folder, "livogs_config.json"), "w", encoding="utf-8") as f:
             json.dump(livogs_cfg, f, indent=4)
