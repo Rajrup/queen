@@ -40,11 +40,11 @@ SEQUENCES: list[SequenceCfg] = [
     #     "sequence_name": "cut_roasted_beef",
     #     "qp_dir_name": "DyNeRF_cut_roasted_beef",
     # },
-    {
-        "dataset_name": "Neural_3D_Video",
-        "sequence_name": "flame_salmon_1",
-        "qp_dir_name": "DyNeRF_flame_salmon_1",
-    },
+    # {
+    #     "dataset_name": "Neural_3D_Video",
+    #     "sequence_name": "flame_salmon_1",
+    #     "qp_dir_name": "DyNeRF_flame_salmon_1",
+    # },
     # {
     #     "dataset_name": "Neural_3D_Video",
     #     "sequence_name": "flame_steak",
@@ -64,11 +64,11 @@ SH_COLOR_SPACE = config.SH_COLOR_SPACE
 RLGR_BLOCK_SIZE = config.RLGR_BLOCK_SIZE
 NVCOMP_ALGORITHM = "ANS"
 
-STAGE2_GPUS = [0, 1]
-STAGE2_WORKERS_PER_GPU = 24
+STAGE2_GPUS = [0, 2, 3]
+STAGE2_WORKERS_PER_GPU = 8
 STAGE2_ENABLE_IMAGE_SAVING = True
 STAGE2_ENABLE_PLY_SAVING = True
-SKIP_SAVED_EXPERIEMNTS = True
+SKIP_SAVED_EXPERIEMNTS = False
 RD_OUTPUT_SUBDIR = "livogs_rd_nvcomp"
 
 EXPERIMENT_BETA_VALUES = [0.0]
