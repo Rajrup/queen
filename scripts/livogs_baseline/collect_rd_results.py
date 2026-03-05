@@ -70,13 +70,38 @@ CSV_COLUMNS = [
     "size_bytes",
     "compressed_mb",
     "position_compressed_bytes",
-    "quats_compressed_bytes",
-    "scales_compressed_bytes",
-    "opacity_compressed_bytes",
-    "sh_dc_compressed_bytes",
-    "sh_rest_compressed_bytes",
+    # Per-dimension compressed bytes are appended dynamically; see
+    # _build_csv_columns() and _detect_per_dim_columns().
     "label",
 ]
+
+
+_PER_DIM_RE = re.compile(r"^(quats|scales|opacity|sh)_dim(\d+)_compressed_bytes$")
+
+
+def _per_dim_sort_key(col: str) -> tuple[int, int]:
+    """Sort key for per-dim column names: group order then dim number."""
+    m = _PER_DIM_RE.match(col)
+    assert m is not None
+    group_order = {"quats": 0, "scales": 1, "opacity": 2, "sh": 3}
+    return (group_order[m.group(1)], int(m.group(2)))
+
+
+def _detect_per_dim_columns(keys: list[str] | set[str]) -> list[str]:
+    """Return sorted per-dimension compressed-bytes column names from keys."""
+    cols = [k for k in keys if _PER_DIM_RE.match(k)]
+    cols.sort(key=_per_dim_sort_key)
+    return cols
+
+
+def _build_csv_columns(rows: list[dict[str, Any]]) -> list[str]:
+    """Build full CSV column list by inserting per-dim columns before 'label'."""
+    if not rows:
+        return list(CSV_COLUMNS)
+    # Detect per-dim columns from the first row's keys
+    per_dim_cols = _detect_per_dim_columns(rows[0].keys())
+    # Insert per-dim columns before 'label' (last element of CSV_COLUMNS)
+    return CSV_COLUMNS[:-1] + per_dim_cols + CSV_COLUMNS[-1:]
 
 
 # ---------------------------------------------------------------------------
@@ -154,27 +179,24 @@ def load_experiment(
     except (TypeError, ValueError):
         return None
 
-    # --- Benchmark (compressed size) ---
+    # --- Benchmark (compressed size + per-dim breakdown) ---
     compressed_bytes: Optional[int] = None
     position_compressed_bytes: int = 0
-    quats_compressed_bytes: int = 0
-    scales_compressed_bytes: int = 0
-    opacity_compressed_bytes: int = 0
-    sh_dc_compressed_bytes: int = 0
-    sh_rest_compressed_bytes: int = 0
+    per_dim_bytes: dict[str, int] = {}
     try:
         with open(benchmark_path, newline="", encoding="utf-8") as f:
-            for row in csv.DictReader(f):
+            reader = csv.DictReader(f)
+            per_dim_cols = _detect_per_dim_columns(reader.fieldnames or [])
+            for row in reader:
                 if _frame_id_matches(row["frame_id"], frame_id):
                     compressed_bytes = int(row["compressed_size_bytes"])
                     position_compressed_bytes = int(row.get("position_compressed_bytes", 0))
-                    quats_compressed_bytes = int(row.get("quats_compressed_bytes", 0))
-                    scales_compressed_bytes = int(row.get("scales_compressed_bytes", 0))
-                    opacity_compressed_bytes = int(row.get("opacity_compressed_bytes", 0))
-                    sh_dc_compressed_bytes = int(row.get("sh_dc_compressed_bytes", 0))
-                    sh_rest_compressed_bytes = int(row.get("sh_rest_compressed_bytes", 0))
+                    for col in per_dim_cols:
+                        per_dim_bytes[col] = int(row.get(col, 0))
                     break
     except (OSError, KeyError, ValueError):
+        return None
+    if compressed_bytes is None:
         return None
 
     # --- Evaluation results ---
@@ -227,11 +249,7 @@ def load_experiment(
         "size_bytes": compressed_bytes,
         "compressed_mb": compressed_bytes / (1024 * 1024),
         "position_compressed_bytes": position_compressed_bytes,
-        "quats_compressed_bytes": quats_compressed_bytes,
-        "scales_compressed_bytes": scales_compressed_bytes,
-        "opacity_compressed_bytes": opacity_compressed_bytes,
-        "sh_dc_compressed_bytes": sh_dc_compressed_bytes,
-        "sh_rest_compressed_bytes": sh_rest_compressed_bytes,
+        **per_dim_bytes,
         "label": label,
     }
 
@@ -306,12 +324,13 @@ def _default_output_csv_for_root(rd_root: str) -> str:
 
 
 def _write_rows_to_csv(rows: list[dict[str, Any]], output_path: str) -> None:
+    columns = _build_csv_columns(rows)
     os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
     with open(output_path, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=CSV_COLUMNS)
+        writer = csv.DictWriter(f, fieldnames=columns)
         writer.writeheader()
         for row in rows:
-            writer.writerow({col: row.get(col, "") for col in CSV_COLUMNS})
+            writer.writerow({col: row.get(col, "") for col in columns})
 
 
 # ---------------------------------------------------------------------------

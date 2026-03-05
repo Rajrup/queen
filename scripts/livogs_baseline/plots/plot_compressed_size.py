@@ -7,17 +7,22 @@ Generates two plots:
   2. Point counts: original points vs voxelized points
 """
 import os
+import re
 import argparse
 import csv
 import matplotlib.pyplot as plt
 
 
+from typing import Any
+
 def load_benchmark_csv(path):
     rows = []
+    _per_dim_re = re.compile(r"^(quats|scales|opacity|sh)_dim(\d+)_compressed_bytes$")
     with open(path) as f:
         r = csv.DictReader(f)
+        per_dim_cols = [c for c in (r.fieldnames or []) if _per_dim_re.match(c)]
         for row in r:
-            rows.append({
+            parsed: dict[str, Any] = {
                 "frame": int(row["frame_id"]),
                 "uncompressed_size_bytes": int(row["uncompressed_size_bytes"]),
                 "position_compressed_bytes": int(row["position_compressed_bytes"]),
@@ -25,12 +30,31 @@ def load_benchmark_csv(path):
                 "compressed_size_bytes": int(row["compressed_size_bytes"]),
                 "original_points": int(row["original_points"]),
                 "voxelized_points": int(row["voxelized_points"]),
-                "quats_compressed_bytes": int(row.get("quats_compressed_bytes", 0)),
-                "scales_compressed_bytes": int(row.get("scales_compressed_bytes", 0)),
-                "opacity_compressed_bytes": int(row.get("opacity_compressed_bytes", 0)),
-                "sh_dc_compressed_bytes": int(row.get("sh_dc_compressed_bytes", 0)),
-                "sh_rest_compressed_bytes": int(row.get("sh_rest_compressed_bytes", 0)),
-            })
+            }
+            # Read all per-dim columns
+            for col in per_dim_cols:
+                parsed[col] = int(row.get(col, 0))
+            # Compute aggregated values from per-dim columns
+            parsed["quats_total"] = sum(
+                parsed[col] for col in per_dim_cols
+                if col.startswith("quats_dim")
+            )
+            parsed["scales_total"] = sum(
+                parsed[col] for col in per_dim_cols
+                if col.startswith("scales_dim")
+            )
+            parsed["opacity_total"] = sum(
+                parsed[col] for col in per_dim_cols
+                if col.startswith("opacity_dim")
+            )
+            # sh_dim0..2 are DC (3 color channels), rest are SH rest
+            sh_cols = sorted(
+                [c for c in per_dim_cols if c.startswith("sh_dim")],
+                key=lambda c: int(_per_dim_re.match(c).group(2)),  # type: ignore[union-attr]
+            )
+            parsed["sh_dc_total"] = sum(parsed[c] for c in sh_cols[:3])
+            parsed["sh_rest_total"] = sum(parsed[c] for c in sh_cols[3:])
+            rows.append(parsed)
     return sorted(rows, key=lambda x: x["frame"])
 
 
@@ -96,14 +120,14 @@ def main():
     plt.close(fig)
 
     # ---- Plot 1b: Per-attribute size breakdown (stacked area) ----
-    has_breakdown = any(r["quats_compressed_bytes"] > 0 for r in rows)
+    has_breakdown = any(r["quats_total"] > 0 for r in rows)
     if has_breakdown:
         pos_mb_s = [r["position_compressed_bytes"] / 1024 / 1024 for r in rows]
-        quats_mb = [r["quats_compressed_bytes"] / 1024 / 1024 for r in rows]
-        scales_mb = [r["scales_compressed_bytes"] / 1024 / 1024 for r in rows]
-        opacity_mb = [r["opacity_compressed_bytes"] / 1024 / 1024 for r in rows]
-        sh_dc_mb = [r["sh_dc_compressed_bytes"] / 1024 / 1024 for r in rows]
-        sh_rest_mb = [r["sh_rest_compressed_bytes"] / 1024 / 1024 for r in rows]
+        quats_mb = [r["quats_total"] / 1024 / 1024 for r in rows]
+        scales_mb = [r["scales_total"] / 1024 / 1024 for r in rows]
+        opacity_mb = [r["opacity_total"] / 1024 / 1024 for r in rows]
+        sh_dc_mb = [r["sh_dc_total"] / 1024 / 1024 for r in rows]
+        sh_rest_mb = [r["sh_rest_total"] / 1024 / 1024 for r in rows]
 
         avg_quats = sum(quats_mb) / n
         avg_scales = sum(scales_mb) / n
