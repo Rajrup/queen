@@ -70,6 +70,7 @@ CSV_COLUMNS = [
     "size_bytes",
     "compressed_mb",
     "position_compressed_bytes",
+    "attribute_compressed_bytes",
     # Per-dimension compressed bytes are appended dynamically; see
     # _build_csv_columns() and _detect_per_dim_columns().
     "label",
@@ -231,6 +232,7 @@ def load_experiment(
     # --- Benchmark (compressed size + per-dim breakdown) ---
     compressed_bytes: Optional[int] = None
     position_compressed_bytes: int = 0
+    attribute_compressed_bytes: int = 0
     per_dim_bytes: dict[str, int] = {}
     try:
         with open(benchmark_path, newline="", encoding="utf-8") as f:
@@ -240,6 +242,7 @@ def load_experiment(
                 if _frame_id_matches(row["frame_id"], frame_id):
                     compressed_bytes = int(row["compressed_size_bytes"])
                     position_compressed_bytes = int(row.get("position_compressed_bytes", 0))
+                    attribute_compressed_bytes = int(row.get("attribute_compressed_bytes", 0))
                     for col in per_dim_cols:
                         per_dim_bytes[col] = int(row.get(col, 0))
                     break
@@ -298,6 +301,7 @@ def load_experiment(
         "size_bytes": compressed_bytes,
         "compressed_mb": compressed_bytes / (1024 * 1024),
         "position_compressed_bytes": position_compressed_bytes,
+        "attribute_compressed_bytes": attribute_compressed_bytes,
         **per_dim_bytes,
         "label": label,
     }
