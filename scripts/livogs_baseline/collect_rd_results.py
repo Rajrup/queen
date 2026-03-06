@@ -17,7 +17,7 @@ import json
 import os
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Any, Optional
+from typing import Any, Iterable, Optional
 
 
 # ---------------------------------------------------------------------------
@@ -36,10 +36,10 @@ RD_OUTPUT_ROOTS: list[dict[str, Any]] = [
         "path": "/synology/rajrup/Queen/pretrained_output/Neural_3D_Video/queen_compressed_flame_salmon_1/compression/livogs_rd",
         "frame_ids": [1],
     },
-    {
-        "path": "/synology/rajrup/Queen/pretrained_output/Neural_3D_Video/queen_compressed_sear_steak/compression/livogs_rd",
-        "frame_ids": [1],
-    },
+    # {
+    #     "path": "/synology/rajrup/Queen/pretrained_output/Neural_3D_Video/queen_compressed_sear_steak/compression/livogs_rd",
+    #     "frame_ids": [1],
+    # },
 ]
 
 OUTPUT_CSV: Optional[str] = None
@@ -87,7 +87,7 @@ def _per_dim_sort_key(col: str) -> tuple[int, int]:
     return (group_order[m.group(1)], int(m.group(2)))
 
 
-def _detect_per_dim_columns(keys: list[str] | set[str]) -> list[str]:
+def _detect_per_dim_columns(keys: Iterable[str]) -> list[str]:
     """Return sorted per-dimension compressed-bytes column names from keys."""
     cols = [k for k in keys if _PER_DIM_RE.match(k)]
     cols.sort(key=_per_dim_sort_key)
@@ -148,6 +148,55 @@ def _infer_sequence_name(rd_root: str) -> str:
         return name
     # Fallback: last non-livogs_rd component
     return os.path.basename(os.path.dirname(rd_root))
+
+
+def _discover_jobs(rd_root: str, frame_ids: Optional[list[int]]) -> list[tuple[str, int, int]]:
+    frame_dirs: list[tuple[int, str]] = []
+    allowed = set(frame_ids) if frame_ids is not None else None
+
+    with os.scandir(rd_root) as frame_entries:
+        for frame_entry in frame_entries:
+            if not frame_entry.is_dir(follow_symlinks=False):
+                continue
+            fid = _parse_frame_id(frame_entry.name)
+            if fid is None:
+                continue
+            if allowed is not None and fid not in allowed:
+                continue
+            frame_dirs.append((fid, frame_entry.path))
+
+    frame_dirs.sort()
+
+    jobs: list[tuple[str, int, int]] = []
+    for frame_id, frame_path in frame_dirs:
+        with os.scandir(frame_path) as depth_entries:
+            for depth_entry in depth_entries:
+                if not depth_entry.is_dir(follow_symlinks=False):
+                    continue
+                depth = _parse_depth(depth_entry.name)
+                if depth is None:
+                    continue
+                with os.scandir(depth_entry.path) as label_entries:
+                    for label_entry in label_entries:
+                        if label_entry.is_dir(follow_symlinks=False):
+                            jobs.append((label_entry.path, frame_id, depth))
+
+    return jobs
+
+
+def _row_sort_key(row: dict[str, Any]) -> tuple[Any, ...]:
+    return (
+        -row["depth"],
+        row["frame_id"],
+        row["qp_sh"],
+        row["beta"],
+        row["qp_quats"],
+        row["qp_scales"],
+        row["qp_opacity"],
+        row["label"],
+        row["size_bytes"],
+        row["position_compressed_bytes"],
+    )
 
 
 def load_experiment(
@@ -264,35 +313,11 @@ def collect_rd_root(
         print(f"[WARN] RD output root not found: {rd_root}")
         return []
 
-    # Discover frame directories and sort numerically
-    frame_dirs: list[tuple[int, str]] = []
-    for entry in os.listdir(rd_root):
-        fid = _parse_frame_id(entry)
-        if fid is not None:
-            frame_dirs.append((fid, os.path.join(rd_root, entry)))
-    frame_dirs.sort()
-
-    if frame_ids is not None:
-        allowed = set(frame_ids)
-        frame_dirs = [(fid, p) for fid, p in frame_dirs if fid in allowed]
-
-    # Build flat list of (exp_dir, frame_id, depth) jobs
-    jobs: list[tuple[str, int, int]] = []
-    for frame_id, frame_path in frame_dirs:
-        for entry in os.listdir(frame_path):
-            d = _parse_depth(entry)
-            if d is None:
-                continue
-            depth_path = os.path.join(frame_path, entry)
-            for label in os.listdir(depth_path):
-                exp_dir = os.path.join(depth_path, label)
-                if os.path.isdir(exp_dir):
-                    jobs.append((exp_dir, frame_id, d))
+    jobs = _discover_jobs(rd_root, frame_ids)
 
     if not jobs:
         return []
 
-    # Parallel load
     total = len(jobs)
     done = 0
     rows: list[dict[str, Any]] = []
@@ -314,8 +339,7 @@ def collect_rd_root(
             rows.append(result)
     print()
 
-    # Sort for deterministic output: depth descending, then by qp values
-    rows.sort(key=lambda r: (-r["depth"], r["qp_sh"], r["qp_quats"], r["qp_scales"], r["qp_opacity"]))
+    rows.sort(key=_row_sort_key)
     return rows
 
 
