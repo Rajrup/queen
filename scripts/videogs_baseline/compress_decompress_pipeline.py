@@ -37,10 +37,12 @@ from compress_decompress import (
     dequantize_videogs_image,
     encode_channel_raw,
     decode_channel_raw,
-    build_channel_qp_map
+    build_channel_qp_map,
 )
 from compress_to_png_full_sh import get_ply_matrix, find_queen_ply_path
 from decompress_from_png_full_sh import save_ply
+
+CAPPED_QP = 22
 
 # ---------------------------------------------------------------------------
 # Main
@@ -61,33 +63,15 @@ if __name__ == "__main__":
     parser.add_argument("--group_size", type=int, default=20)
     parser.add_argument("--interval", type=int, default=1)
     parser.add_argument("--sh_degree", type=int, default=2)
-    parser.add_argument("--qp", type=int, default=22,
-                        help="H.264 QP for position low bytes and fallback (0=lossless, 51=worst)")
-    parser.add_argument("--qfd", type=int, default=None,
-                        help="QP for DC color (default: same as --qp)")
-    parser.add_argument("--qfr1", type=int, default=None,
-                        help="QP for SH band 1 (default: same as --qp)")
-    parser.add_argument("--qfr2", type=int, default=None,
-                        help="QP for SH band 2 (default: same as --qp)")
-    parser.add_argument("--qfr3", type=int, default=None,
-                        help="QP for SH band 3 (default: same as --qp)")
-    parser.add_argument("--qo", type=int, default=None,
-                        help="QP for opacity (default: same as --qp)")
-    parser.add_argument("--qs", type=int, default=None,
-                        help="QP for scale (default: same as --qp)")
-    parser.add_argument("--qr", type=int, default=None,
-                        help="QP for rotation (default: same as --qp)")
+    parser.add_argument("--qp", type=int, default=25,
+                        help="H.264 QP (0=lossless, 51=worst). Default: 25")
     args = parser.parse_args()
 
     video_folder = os.path.join(args.output_folder, "compressed_video")
     os.makedirs(video_folder, exist_ok=True)
     os.makedirs(args.output_ply_folder, exist_ok=True)
 
-    channel_qp_map = build_channel_qp_map(
-        args.sh_degree, args.qp,
-        args.qfd, args.qfr1, args.qfr2, args.qfr3,
-        args.qo, args.qs, args.qr,
-    )
+    channel_qp_map = build_channel_qp_map(args.sh_degree, args.qp)
 
     min_max_json = {}
     group_info_json = {}
@@ -96,6 +80,7 @@ if __name__ == "__main__":
     num_frames_total = args.frame_end - args.frame_start + 1
     num_groups = (num_frames_total + args.group_size - 1) // args.group_size
 
+    capped_qp = min(args.qp, CAPPED_QP)
     print("=" * 70)
     print("VideoGS Combined Compress + Decompress Pipeline")
     print("=" * 70)
@@ -106,18 +91,19 @@ if __name__ == "__main__":
           f"(interval={args.interval})")
     print(f"  Group size:     {args.group_size}")
     print(f"  SH degree:      {args.sh_degree}")
-    print(f"  QP (pos/norm):  {args.qp}")
-    print(f"  QP DC:          {args.qfd if args.qfd is not None else args.qp} (--qfd)")
-    if args.sh_degree >= 1:
-        print(f"  QP SH band 1:   {args.qfr1 if args.qfr1 is not None else args.qp} (--qfr1)")
-    if args.sh_degree >= 2:
-        print(f"  QP SH band 2:   {args.qfr2 if args.qfr2 is not None else args.qp} (--qfr2)")
-    if args.sh_degree >= 3:
-        print(f"  QP SH band 3:   {args.qfr3 if args.qfr3 is not None else args.qp} (--qfr3)")
-    print(f"  QP opacity:     {args.qo if args.qo is not None else args.qp} (--qo)")
-    print(f"  QP scale:       {args.qs if args.qs is not None else args.qp} (--qs)")
-    print(f"  QP rotation:    {args.qr if args.qr is not None else args.qp} (--qr)")
     print(f"  Groups:         {num_groups}")
+    print(f"  --- QP per attribute ---")
+    print(f"  Position LSB:   {channel_qp_map[0]}")
+    print(f"  Position MSB:   {channel_qp_map[1]}")
+    print(f"  Normals:        {channel_qp_map[6]}")
+    print(f"  DC color:       {channel_qp_map[9]}")
+    ch_offset = 12
+    for band in range(1, args.sh_degree + 1):
+        print(f"  SH band {band}:      {channel_qp_map[ch_offset]}")
+        ch_offset += (2 * band + 1) * 3
+    print(f"  Opacity:        {channel_qp_map[ch_offset]}")
+    print(f"  Scale:          {channel_qp_map[ch_offset + 1]}")
+    print(f"  Rotation:       {channel_qp_map[ch_offset + 4]}")
     print("=" * 70)
 
     for group_idx in tqdm(range(num_groups), desc="Groups"):
@@ -196,7 +182,12 @@ if __name__ == "__main__":
 
         t_enc_start = time.perf_counter()
         for ch in channels:
-            ch_qp = channel_qp_map.get(ch, args.qp)
+            if ch not in channel_qp_map:
+                raise RuntimeError(
+                    f"Channel {ch} not found in QP map. "
+                    f"Check --sh_degree ({args.sh_degree}) matches the PLY."
+                )
+            ch_qp = channel_qp_map[ch]
 
             raw_frames = [quantized[f][str(ch)] for f in valid_frames]
             mp4_path = os.path.join(group_video_dir, f"{ch}.mp4")
@@ -291,13 +282,7 @@ if __name__ == "__main__":
         "interval": args.interval,
         "sh_degree": args.sh_degree,
         "qp": args.qp,
-        "qfd": args.qfd if args.qfd is not None else args.qp,
-        "qfr1": args.qfr1 if args.qfr1 is not None else args.qp,
-        "qfr2": args.qfr2 if args.qfr2 is not None else args.qp,
-        "qfr3": args.qfr3 if args.qfr3 is not None else args.qp,
-        "qo": args.qo if args.qo is not None else args.qp,
-        "qs": args.qs if args.qs is not None else args.qp,
-        "qr": args.qr if args.qr is not None else args.qp,
+        "channel_qp_map": {str(k): v for k, v in sorted(channel_qp_map.items())},
     }
     with open(os.path.join(args.output_folder, "videogs_config.json"), "w") as f:
         json.dump(config_out, f, indent=4)

@@ -11,20 +11,8 @@ import argparse
 import csv
 import matplotlib.pyplot as plt
 
-
-def add_qp_args(parser):
-    parser.add_argument("--qp", type=int, default=22)
-    parser.add_argument("--qfd", type=int, default=22)
-    parser.add_argument("--qfr1", type=int, default=22)
-    parser.add_argument("--qfr2", type=int, default=22)
-    parser.add_argument("--qo", type=int, default=22)
-    parser.add_argument("--qs", type=int, default=22)
-    parser.add_argument("--qr", type=int, default=22)
-
-
 def build_output_tag(args):
-    return (f"qp_{args.qp}_qfd_{args.qfd}_qfr1_{args.qfr1}_qfr2_{args.qfr2}"
-            f"_qo_{args.qo}_qs_{args.qs}_qr_{args.qr}")
+    return f"qp_{args.qp}"
 
 
 def load_pipeline_csv(path):
@@ -47,7 +35,7 @@ def main():
                         help="Base folder for videogs_compression")
     parser.add_argument("--dataset_name", type=str, required=True)
     parser.add_argument("--sequence_name", type=str, required=True)
-    add_qp_args(parser)
+    parser.add_argument("--qp", type=int, required=True)
     parser.add_argument("--output_folder", type=str, required=True,
                         help="Output folder for plot PNG")
     args = parser.parse_args()
