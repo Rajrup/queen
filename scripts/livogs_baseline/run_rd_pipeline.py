@@ -66,8 +66,9 @@ NVCOMP_ALGORITHM = "ANS"
 
 STAGE2_GPUS = [0, 1]
 STAGE2_WORKERS_PER_GPU = 14
-STAGE2_ENABLE_IMAGE_SAVING = True
-STAGE2_ENABLE_PLY_SAVING = True
+STAGE2_ENABLE_EVALUATION = True
+STAGE2_SAVE_EVAL_RENDERS = True
+STAGE2_SAVE_DECOMPRESSED_PLY = True
 SKIP_SAVED_EXPERIEMNTS = True
 RD_OUTPUT_SUBDIR = "livogs_rd_nvcomp"
 
@@ -232,6 +233,46 @@ def _normalize_stage2_gpus(gpus: list[int]) -> list[int]:
         raise ValueError("Stage-2 GPU list is empty after normalization.")
 
     return normalized
+
+
+def _resolve_stage2_options(log_messages: bool = True) -> tuple[bool, bool, bool]:
+    """Resolve Stage-2 evaluation/render/PLY behavior into a consistent tuple.
+
+    Returns ``(enable_evaluation, save_eval_renders, save_decompressed_ply)``.
+
+    Key rule: evaluation requires decompressed PLY files, so
+    ``save_decompressed_ply`` is forced to ``True`` when evaluation is enabled.
+    This keeps metrics/evaluation valid while still allowing an I/O-reduced mode
+    (evaluation off + no PLY persistence) for throughput-focused runs.
+    """
+    enable_evaluation = bool(STAGE2_ENABLE_EVALUATION)
+    save_eval_renders = bool(STAGE2_SAVE_EVAL_RENDERS)
+    save_decompressed_ply = bool(STAGE2_SAVE_DECOMPRESSED_PLY)
+
+    if enable_evaluation and not save_decompressed_ply:
+        if log_messages:
+            print("  [WARN] Evaluation requires decompressed PLY files; forcing save_decompressed_ply=True.")
+        save_decompressed_ply = True
+
+    if not enable_evaluation and save_eval_renders:
+        if log_messages:
+            print("  [INFO] save_eval_renders ignored because evaluation is disabled.")
+        save_eval_renders = False
+
+    if log_messages:
+        if enable_evaluation:
+            if save_eval_renders:
+                print("  [INFO] Stage-2 evaluation mode: metrics + render image export.")
+            else:
+                print("  [INFO] Stage-2 evaluation mode: metrics-only (render export disabled).")
+            print("  [INFO] Decompressed PLY files are required for evaluation and will be saved.")
+        else:
+            if save_decompressed_ply:
+                print("  [INFO] Evaluation is disabled; decompressed PLY files will still be saved.")
+            else:
+                print("  [INFO] Evaluation is disabled; decompressed PLY saving is disabled to reduce I/O.")
+
+    return enable_evaluation, save_eval_renders, save_decompressed_ply
 
 
 def filter_qp_jsons_by_selection(
@@ -438,6 +479,8 @@ def _is_saved_experiment_complete(
 
 def stage_evaluate(seq: SequenceCfg, frame_id: int, depths: list[int]) -> list[str]:
     """Stage 2: compress + evaluate for every selected QP config JSON."""
+    enable_evaluation, save_eval_renders, save_decompressed_ply = _resolve_stage2_options(log_messages=False)
+
     json_files = find_qp_jsons(seq, frame_id)
     json_files = filter_qp_jsons_by_selection(
         json_files,
@@ -473,7 +516,7 @@ def stage_evaluate(seq: SequenceCfg, frame_id: int, depths: list[int]) -> list[s
     jobs: list[Stage2Job] = []
     skipped_saved = 0
     skipped_frame_mismatch = 0
-    require_evaluation = STAGE2_ENABLE_IMAGE_SAVING
+    require_evaluation = enable_evaluation
 
     for json_path in json_files:
         label = os.path.splitext(os.path.basename(json_path))[0]
@@ -546,10 +589,12 @@ def stage_evaluate(seq: SequenceCfg, frame_id: int, depths: list[int]) -> list[s
                 "--nvcomp_algorithm",
                 str(NVCOMP_ALGORITHM) if NVCOMP_ALGORITHM is not None else "None",
             ]
-            if not STAGE2_ENABLE_PLY_SAVING:
+            if not save_decompressed_ply:
                 cmd.append("--disable_ply_saving")
-            if not STAGE2_ENABLE_IMAGE_SAVING:
-                cmd.append("--disable_image_saving")
+            if not enable_evaluation:
+                cmd.append("--disable_evaluation")
+            if save_eval_renders:
+                cmd.append("--save_renders")
 
             env = os.environ.copy()
             env["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
@@ -614,12 +659,19 @@ def stage_evaluate(seq: SequenceCfg, frame_id: int, depths: list[int]) -> list[s
 
 def main() -> None:
     """Run configured RD stages for all sequences/frames."""
+    enable_evaluation, save_eval_renders, save_decompressed_ply = _resolve_stage2_options()
+
     sep = "=" * 70
     print(sep)
     print("LiVoGS RD Pipeline (QUEEN)")
     print(f"  Sequences:  {[s['sequence_name'] for s in SEQUENCES]}")
     print(f"  Frame IDs:  {FRAME_IDS}")
-    print(f"  Stage-2:    gpus={STAGE2_GPUS} workers_per_gpu={STAGE2_WORKERS_PER_GPU} enable_image_saving={STAGE2_ENABLE_IMAGE_SAVING} enable_ply_saving={STAGE2_ENABLE_PLY_SAVING}")
+    print(
+        "  Stage-2:    "
+        f"gpus={STAGE2_GPUS} workers_per_gpu={STAGE2_WORKERS_PER_GPU} "
+        f"enable_evaluation={enable_evaluation} save_eval_renders={save_eval_renders} "
+        f"save_decompressed_ply={save_decompressed_ply}"
+    )
     print(f"  Stage-2:    skip_saved_experiemnts={SKIP_SAVED_EXPERIEMNTS}")
     print(f"  Raw root:   {RAW_DATA_ROOT}")
     print(f"  Train root: {PRETRAINED_ROOT}")

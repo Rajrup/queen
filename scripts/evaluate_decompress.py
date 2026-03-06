@@ -170,15 +170,30 @@ def setup_queen_evaluation(dataset, opt, qp, args):
             n_test_cams, n_frames, dataset.start_idx)
 
 
-def update_queen_cameras(scene, test_loader, frame_idx, args):
-    """Update test camera GT images for a new frame (QUEEN-specific)."""
-    if frame_idx > 1:
-        test_data = next(test_loader)
+def update_queen_cameras(scene, test_loader, current_frame_idx, target_frame_idx, args):
+    if target_frame_idx < current_frame_idx:
+        raise ValueError(
+            f"target_frame_idx ({target_frame_idx}) must be >= current_frame_idx ({current_frame_idx})"
+        )
+    if target_frame_idx == current_frame_idx:
+        return list(scene.getTestCameras()), current_frame_idx
+
+    for frame_idx in range(current_frame_idx + 1, target_frame_idx + 1):
+        try:
+            test_data = next(test_loader)
+        except StopIteration as exc:
+            raise RuntimeError(
+                f"Ran out of test frames while advancing to frame {target_frame_idx}"
+            ) from exc
+
+        if frame_idx != target_frame_idx:
+            continue
+
         test_images, test_paths = test_data[0].cuda(), test_data[1]
         for idx, cam in enumerate(scene.getTestCameras()):
-            updateCam(args, test_images[idx], test_paths[idx],
-                      frame_idx, cam, 1.0)
-    return list(scene.getTestCameras())
+            updateCam(args, test_images[idx], test_paths[idx], frame_idx, cam, 1.0)
+
+    return list(scene.getTestCameras()), target_frame_idx
 
 
 # ---------------------------------------------------------------------------
@@ -213,7 +228,7 @@ def evaluate_livogs_quality(dataset, opt, pipeline, qp, args):
     frame_end = args.frame_end if args.frame_end > 0 else n_frames
     frame_end = min(frame_end, n_frames)
     interval = max(1, args.interval)
-    frames_to_eval = set(range(frame_start, frame_end + 1, interval))
+    frames_to_eval = sorted(set(range(frame_start, frame_end + 1, interval)))
 
     print(f"\nEvaluating LiVoGS decompression quality")
     print(f"  Model path:            {args.model_path}")
@@ -222,13 +237,22 @@ def evaluate_livogs_quality(dataset, opt, pipeline, qp, args):
           f"(range [{frame_start}, {frame_end}], interval {interval})")
     print(f"  Test cameras: {n_test_cams}\n")
 
+    if not frames_to_eval:
+        print("No frames were selected for evaluation.")
+        return results
+
     # --- Per-frame evaluation loop ---
-    for frame_idx in tqdm(range(1, n_frames + 1), desc="Evaluating Frames"):
+    current_frame_idx = 1
+    for frame_idx in tqdm(frames_to_eval, desc="Evaluating Frames", total=len(frames_to_eval)):
         t0 = time.time()
-        cameras = update_queen_cameras(scene, test_loader, frame_idx, args)
+        cameras, current_frame_idx = update_queen_cameras(
+            scene,
+            test_loader,
+            current_frame_idx,
+            frame_idx,
+            args,
+        )
         t1 = time.time()
-        if frame_idx not in frames_to_eval:
-            continue
 
         frame = str(start_idx + frame_idx).zfill(4)
 

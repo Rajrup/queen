@@ -46,8 +46,12 @@ def main() -> None:
                         help="Torch device for codec (use cuda:0 with CUDA_VISIBLE_DEVICES pinning)")
     parser.add_argument("--disable_ply_saving", action="store_true",
                         help="Skip saving decompressed PLY files")
+    parser.add_argument("--disable_evaluation", action="store_true",
+                        help="Skip quality evaluation (metrics + renders)")
+    parser.add_argument("--save_renders", action="store_true",
+                        help="Save rendered images during evaluation")
     parser.add_argument("--disable_image_saving", action="store_true",
-                        help="Skip quality evaluation (image rendering)")
+                        help="Deprecated alias: disables render image saving")
     parser.add_argument("--nvcomp_algorithm", type=str, default=config.NVCOMP_ALGORITHM,
                         help="nvCOMP lossless compression algorithm for positions "
                              "(e.g. ANS, LZ4, Snappy, None to disable)")
@@ -56,6 +60,11 @@ def main() -> None:
     if args.frame_id is not None:
         args.frame_start = args.frame_id
         args.frame_end = args.frame_id
+
+    if args.disable_image_saving and args.save_renders:
+        print("[WARN] --disable_image_saving overrides --save_renders.")
+    if args.disable_image_saving:
+        args.save_renders = False
 
     nvcomp_algorithm = None if args.nvcomp_algorithm == "None" else args.nvcomp_algorithm
 
@@ -142,8 +151,8 @@ def main() -> None:
         nvcomp_algorithm=nvcomp_algorithm,
     )
 
-    if args.disable_image_saving:
-        print("[INFO] --disable_image_saving: skipping quality evaluation.")
+    if args.disable_evaluation:
+        print("[INFO] --disable_evaluation: skipping quality evaluation.")
     else:
         print(f"\n{'=' * 70}\nStep 2: Evaluate Decompression Quality\n{'=' * 70}")
         eval_cmd = [
@@ -159,7 +168,6 @@ def main() -> None:
             os.path.join(output_folder, "decompressed_ply"),
             "--output_render_path",
             os.path.join(output_folder, "evaluation"),
-            "--save_renders",
             "--frame_start",
             str(args.frame_start),
             "--frame_end",
@@ -167,6 +175,8 @@ def main() -> None:
             "--interval",
             str(args.interval),
         ]
+        if args.save_renders:
+            eval_cmd.append("--save_renders")
         result = subprocess.run(eval_cmd, cwd=config.QUEEN_ROOT)
         if result.returncode != 0:
             raise SystemExit(result.returncode)
