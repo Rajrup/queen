@@ -25,9 +25,12 @@ from tqdm import tqdm
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 _QUEEN_ROOT = os.path.dirname(os.path.dirname(_THIS_DIR))
 _VIDEOGS_COMPRESSION = os.path.join(_QUEEN_ROOT, "VideoGS", "compression")
+_BACKUP_DIR = os.path.join(_THIS_DIR, "backup")
 
 if _VIDEOGS_COMPRESSION not in sys.path:
     sys.path.insert(0, _VIDEOGS_COMPRESSION)
+if _BACKUP_DIR not in sys.path:
+    sys.path.insert(0, _BACKUP_DIR)
 if _THIS_DIR not in sys.path:
     sys.path.insert(0, _THIS_DIR)
 

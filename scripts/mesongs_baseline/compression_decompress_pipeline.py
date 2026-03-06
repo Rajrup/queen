@@ -225,8 +225,8 @@ def compute_uncompressed_size(gaussians, sh_degree=2):
     """Compute uncompressed size in bytes from GaussianModel attributes (float32)."""
     N = gaussians.get_xyz.shape[0]
     n_sh_rest = 3 * ((sh_degree + 1) ** 2 - 1)
-    n_floats_per_point = 3 + 3 + 3 + n_sh_rest + 1 + 3 + 4  # xyz + normals + f_dc + f_rest + opacity + scale + rot
-    return N * n_floats_per_point * 4
+    n_floats_per_point = 3 + 3 + n_sh_rest + 1 + 3 + 4  # xyz + f_dc + f_rest + opacity + scale + rot
+    return N * n_floats_per_point * 4  # float32 = 4 bytes
 
 
 def save_decoded_ply(decoded_gaussians, output_path):

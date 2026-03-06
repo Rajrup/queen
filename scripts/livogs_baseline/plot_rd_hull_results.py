@@ -15,11 +15,27 @@ from rd_pipeline.plot import plot_rd_scatter
 
 RD_OUTPUT_ROOTS: list[dict[str, Any]] = [
     {
-        "path": "/synology/rajrup/Queen/pretrained_output/Neural_3D_Video/queen_compressed_flame_salmon_1/compression/livogs_rd",
+        "path": "/synology/rajrup/Queen/pretrained_output/Neural_3D_Video/queen_compressed_coffee_martini/compression/livogs_rd_nvcomp",
         "frame_ids": [1],
     },
     {
-        "path": "/synology/rajrup/Queen/pretrained_output/Neural_3D_Video/queen_compressed_sear_steak/compression/livogs_rd",
+        "path": "/synology/rajrup/Queen/pretrained_output/Neural_3D_Video/queen_compressed_cook_spinach/compression/livogs_rd_nvcomp",
+        "frame_ids": [1],
+    },
+    {
+        "path": "/synology/rajrup/Queen/pretrained_output/Neural_3D_Video/queen_compressed_cut_roasted_beef/compression/livogs_rd_nvcomp",
+        "frame_ids": [1],
+    },
+    {
+        "path": "/synology/rajrup/Queen/pretrained_output/Neural_3D_Video/queen_compressed_flame_salmon_1/compression/livogs_rd_nvcomp",
+        "frame_ids": [1],
+    },
+    {
+        "path": "/synology/rajrup/Queen/pretrained_output/Neural_3D_Video/queen_compressed_flame_steak/compression/livogs_rd_nvcomp",
+        "frame_ids": [1],
+    },
+    {
+        "path": "/synology/rajrup/Queen/pretrained_output/Neural_3D_Video/queen_compressed_sear_steak/compression/livogs_rd_nvcomp",
         "frame_ids": [1],
     },
 ]
