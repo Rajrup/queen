@@ -46,39 +46,52 @@ from compression.utils import euler_to_quaternion
 # ---------------------------------------------------------------------------
 # Neural_3D_Video Config (same structure as universal_config in mesongs.py)
 # ---------------------------------------------------------------------------
+DEFAULT_DEPTH = 17
+DEFAULT_NUM_BITS = 8
+DEFAULT_N_BLOCK = 57
+DEFAULT_CODEBOOK_SIZE = 2048
+DEFAULT_PRUNE_PERCENT = 0.0
 
 neural3d_config = {
     'prune': {
-        'cook_spinach': 0.1,
-        'cut_roasted_beef': 0.1,
-        'flame_salmon_1': 0.1,
-        'flame_steak': 0.1,
-        'sear_steak': 0.1,
-        'coffee_martini': 0.1,
+        'cook_spinach': DEFAULT_PRUNE_PERCENT,
+        'cut_roasted_beef': DEFAULT_PRUNE_PERCENT,
+        'flame_salmon_1': DEFAULT_PRUNE_PERCENT,
+        'flame_steak': DEFAULT_PRUNE_PERCENT,
+        'sear_steak': DEFAULT_PRUNE_PERCENT,
+        'coffee_martini': DEFAULT_PRUNE_PERCENT,
     },
     'depth': {
-        'cook_spinach': 14,
-        'cut_roasted_beef': 14,
-        'flame_salmon_1': 14,
-        'flame_steak': 14,
-        'sear_steak': 14,
-        'coffee_martini': 14,
+        'cook_spinach': DEFAULT_DEPTH,
+        'cut_roasted_beef': DEFAULT_DEPTH,
+        'flame_salmon_1': DEFAULT_DEPTH,
+        'flame_steak': DEFAULT_DEPTH,
+        'sear_steak': DEFAULT_DEPTH,
+        'coffee_martini': DEFAULT_DEPTH,
     },
     'n_block': {
-        'cook_spinach': 66,
-        'cut_roasted_beef': 66,
-        'flame_salmon_1': 66,
-        'flame_steak': 66,
-        'sear_steak': 66,
-        'coffee_martini': 66,
+        'cook_spinach': DEFAULT_N_BLOCK,
+        'cut_roasted_beef': DEFAULT_N_BLOCK,
+        'flame_salmon_1': DEFAULT_N_BLOCK,
+        'flame_steak': DEFAULT_N_BLOCK,
+        'sear_steak': DEFAULT_N_BLOCK,
+        'coffee_martini': DEFAULT_N_BLOCK,
     },
     'cb': {
-        'cook_spinach': 2048,
-        'cut_roasted_beef': 2048,
-        'flame_salmon_1': 2048,
-        'flame_steak': 2048,
-        'sear_steak': 2048,
-        'coffee_martini': 2048,
+        'cook_spinach': DEFAULT_CODEBOOK_SIZE,
+        'cut_roasted_beef': DEFAULT_CODEBOOK_SIZE,
+        'flame_salmon_1': DEFAULT_CODEBOOK_SIZE,
+        'flame_steak': DEFAULT_CODEBOOK_SIZE,
+        'sear_steak': DEFAULT_CODEBOOK_SIZE,
+        'coffee_martini': DEFAULT_CODEBOOK_SIZE,
+    },
+    'num_bits': {
+        'cook_spinach': DEFAULT_NUM_BITS,
+        'cut_roasted_beef': DEFAULT_NUM_BITS,
+        'flame_salmon_1': DEFAULT_NUM_BITS,
+        'flame_steak': DEFAULT_NUM_BITS,
+        'sear_steak': DEFAULT_NUM_BITS,
+        'coffee_martini': DEFAULT_NUM_BITS,
     },
 }
 
@@ -284,18 +297,18 @@ if __name__ == "__main__":
     parser.add_argument("--white_background", action="store_true")
 
     # MesonGS hyperparameters (override config defaults)
-    parser.add_argument("--depth", type=int, default=None, help="Octree depth (default: from config)")
-    parser.add_argument("--n_block", type=int, default=None, help="Block quantization count (default: from config)")
-    parser.add_argument("--codebook_size", type=int, default=None, help="VQ codebook size (default: from config)")
+    parser.add_argument("--depth", type=int, default=DEFAULT_DEPTH, help="Octree depth (default: from config)")
+    parser.add_argument("--n_block", type=int, default=DEFAULT_N_BLOCK, help="Block quantization count (default: from config)")
+    parser.add_argument("--codebook_size", type=int, default=DEFAULT_CODEBOOK_SIZE, help="VQ codebook size (default: from config)")
     parser.add_argument("--prune", action="store_true", help="Enable pruning before compression")
-    parser.add_argument("--prune_percent", type=float, default=None,
+    parser.add_argument("--prune_percent", type=float, default=DEFAULT_PRUNE_PERCENT,
                         help="Prune fraction (default: from config)")
 
     # MesonGS defaults that rarely change
     parser.add_argument("--oct_merge", type=str, default="mean", choices=["mean", "imp", "rand"])
     parser.add_argument("--batch_size", type=int, default=262144)
     parser.add_argument("--steps", type=int, default=1000)
-    parser.add_argument("--num_bits", type=int, default=8)
+    parser.add_argument("--num_bits", type=int, default=DEFAULT_NUM_BITS)
 
     args = parser.parse_args()
 
@@ -304,17 +317,18 @@ if __name__ == "__main__":
     if scene not in neural3d_config['depth']:
         print(f"Warning: scene '{scene}' not in neural3d_config, using defaults")
 
-    depth = args.depth if args.depth is not None else neural3d_config['depth'].get(scene, 14)
-    n_block = args.n_block if args.n_block is not None else neural3d_config['n_block'].get(scene, 66)
-    codebook_size = args.codebook_size if args.codebook_size is not None else neural3d_config['cb'].get(scene, 2048)
-    prune_percent = args.prune_percent if args.prune_percent is not None else neural3d_config['prune'].get(scene, 0.1)
+    depth = args.depth if args.depth is not None else neural3d_config['depth'].get(scene, DEFAULT_DEPTH)
+    n_block = args.n_block if args.n_block is not None else neural3d_config['n_block'].get(scene, DEFAULT_N_BLOCK)
+    codebook_size = args.codebook_size if args.codebook_size is not None else neural3d_config['cb'].get(scene, DEFAULT_CODEBOOK_SIZE)
+    prune_percent = args.prune_percent if args.prune_percent is not None else neural3d_config['prune'].get(scene, DEFAULT_PRUNE_PERCENT)
+    num_bits = args.num_bits if args.num_bits is not None else neural3d_config['num_bits'].get(scene, DEFAULT_NUM_BITS)
 
     # --- Build dataset_args (SimpleNamespace matching what encode/decode_mesongs expects) ---
     from types import SimpleNamespace
     dataset_args = SimpleNamespace(
         sh_degree=args.sh_degree,
         depth=depth,
-        num_bits=args.num_bits,
+        num_bits=num_bits,
         oct_merge=args.oct_merge,
         raht=True,
         per_block_quant=True,
@@ -383,7 +397,7 @@ if __name__ == "__main__":
             print(f"Warning: PLY not found for frame {frame_str} at {frame_dir}, skipping")
             continue
 
-        gaussians = GaussianModel(args.sh_degree, depth=depth, num_bits=args.num_bits)
+        gaussians = GaussianModel(args.sh_degree, depth=depth, num_bits=num_bits)
         gaussians.load_ply(ply_file_path, og_number_points=-1, spatial_lr_scale=cameras_extent)
         N_original = gaussians.get_xyz.shape[0]
         uncompressed_size_bytes = compute_uncompressed_size(gaussians, args.sh_degree)

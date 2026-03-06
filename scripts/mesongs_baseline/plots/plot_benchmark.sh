@@ -9,7 +9,7 @@ SEQUENCE_NAME="flame_salmon_1"    #
 # SEQUENCE_NAME="flame_steak"       #
 # SEQUENCE_NAME="sear_steak"        #
 
-CONFIG_NAME="depth_cfg_nblock_cfg_cb_cfg"
+CONFIG_NAME="params_default"
 
 data_path="/synology/rajrup/Queen"
 gt_model_path="${data_path}/pretrained_output/${DATASET_NAME}/queen_compressed_${SEQUENCE_NAME}"

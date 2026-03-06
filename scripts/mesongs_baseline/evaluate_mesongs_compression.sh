@@ -22,15 +22,9 @@ SEQUENCE_NAME="flame_salmon_1"    #
 # SEQUENCE_NAME="sear_steak"        #
 
 START_FRAME=1
-END_FRAME=300
+END_FRAME=40
 INTERVAL=10
 SH_DEGREE=2
-
-# MesonGS-specific parameters (empty = use config defaults)
-DEPTH=""
-N_BLOCK=""
-CODEBOOK_SIZE=""
-PRUNE=""
 
 # --- Parse named arguments ---
 while [[ $# -gt 0 ]]; do
@@ -39,10 +33,6 @@ while [[ $# -gt 0 ]]; do
         --frame_start)     START_FRAME="$2";     shift 2 ;;
         --frame_end)       END_FRAME="$2";       shift 2 ;;
         --interval)        INTERVAL="$2";        shift 2 ;;
-        --depth)           DEPTH="$2";           shift 2 ;;
-        --n_block)         N_BLOCK="$2";         shift 2 ;;
-        --codebook_size)   CODEBOOK_SIZE="$2";   shift 2 ;;
-        --prune)           PRUNE="--prune";      shift 1 ;;
         *) echo "Unknown argument: $1"; exit 1 ;;
     esac
 done
@@ -52,18 +42,8 @@ dataset_path="${data_path}/${DATASET_NAME}/${SEQUENCE_NAME}"
 gt_model_path="${data_path}/pretrained_output/${DATASET_NAME}/queen_compressed_${SEQUENCE_NAME}"
 
 # Build output folder name from parameters
-output_tag="depth_${DEPTH:-cfg}_nblock_${N_BLOCK:-cfg}_cb_${CODEBOOK_SIZE:-cfg}"
-if [ -n "$PRUNE" ]; then
-    output_tag="${output_tag}_pruned"
-fi
+output_tag="params_default"
 output_folder="${gt_model_path}/compression/mesongs/${output_tag}"
-
-# Build optional args for the Python script
-OPTIONAL_ARGS=""
-[ -n "$DEPTH" ]         && OPTIONAL_ARGS="${OPTIONAL_ARGS} --depth ${DEPTH}"
-[ -n "$N_BLOCK" ]       && OPTIONAL_ARGS="${OPTIONAL_ARGS} --n_block ${N_BLOCK}"
-[ -n "$CODEBOOK_SIZE" ] && OPTIONAL_ARGS="${OPTIONAL_ARGS} --codebook_size ${CODEBOOK_SIZE}"
-[ -n "$PRUNE" ]         && OPTIONAL_ARGS="${OPTIONAL_ARGS} ${PRUNE}"
 
 QUEEN_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 MESONGS_ROOT="${QUEEN_ROOT}/MesonGS"
@@ -79,7 +59,6 @@ echo "  Dataset:      ${dataset_path}"
 echo "  GT model:     ${gt_model_path}"
 echo "  Output:       ${output_folder}"
 echo "  Scene:        ${SEQUENCE_NAME}"
-echo "  Optional:     ${OPTIONAL_ARGS}"
 echo "======================================================================"
 
 cd "${MESONGS_ROOT}"
@@ -91,8 +70,7 @@ python "${QUEEN_ROOT}/scripts/mesongs_baseline/compression_decompress_pipeline.p
     --output_ply_folder "${output_folder}/decompressed_ply" \
     --frame_start ${START_FRAME} --frame_end ${END_FRAME} --interval ${INTERVAL} \
     --sh_degree ${SH_DEGREE} \
-    --scene_name "${SEQUENCE_NAME}" \
-    ${OPTIONAL_ARGS}
+    --scene_name "${SEQUENCE_NAME}"
 
 ### 2. Evaluate Decompression Quality (PSNR/SSIM vs GT)
 echo ""
