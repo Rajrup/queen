@@ -22,7 +22,7 @@ SEQUENCE_NAME="flame_salmon_1"    #
 # SEQUENCE_NAME="sear_steak"        #
 
 START_FRAME=1
-END_FRAME=40
+END_FRAME=300
 INTERVAL=10
 SH_DEGREE=2
 
