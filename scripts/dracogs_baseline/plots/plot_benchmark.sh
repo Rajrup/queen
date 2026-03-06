@@ -8,7 +8,14 @@ DATASET_NAME="Neural_3D_Video"
 SEQUENCE_NAME="flame_salmon_1"    #
 # SEQUENCE_NAME="flame_steak"       #
 # SEQUENCE_NAME="sear_steak"        #
-CONFIG_NAME="qp_16_qfd_16_qfr1_16_qfr2_16_qfr3_16_qo_16_qs_16_qr_16_cl_10"
+
+# LTS quantization parameters
+EG=16
+EO=16
+ET=16
+ES=16
+CL=10
+CONFIG_NAME="eg_${EG}_eo_${EO}_et_${ET}_es_${ES}_cl_${CL}"
 
 data_path="/synology/rajrup/Queen"
 gt_model_path="${data_path}/pretrained_output/${DATASET_NAME}/queen_compressed_${SEQUENCE_NAME}"

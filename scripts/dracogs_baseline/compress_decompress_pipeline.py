@@ -36,6 +36,11 @@ if _THIS_DIR not in sys.path:
     sys.path.insert(0, _THIS_DIR)
 from utils import read_gs_ply, save_gs_ply
 
+DEFAULT_EG = 16
+DEFAULT_EO = 16
+DEFAULT_ET = 16
+DEFAULT_ES = 16
+DEFAULT_CL = 10
 
 # ---------------------------------------------------------------------------
 # PLY utilities
@@ -81,21 +86,28 @@ if __name__ == "__main__":
     parser.add_argument("--scene_name", type=str, required=True,
                         help="Neural_3D_Video sequence name (e.g. cook_spinach)")
 
-    # DracoGS quantization parameters (0=lossless, higher=more bits=better quality)
-    parser.add_argument("--qp", type=int, default=16, help="Quantization bits for position (0-30)")
-    parser.add_argument("--qfd", type=int, default=16, help="Quantization bits for SH DC (0-30)")
-    parser.add_argument("--qfr1", type=int, default=16, help="Quantization bits for SH band 1 (0-30)")
-    parser.add_argument("--qfr2", type=int, default=16, help="Quantization bits for SH band 2 (0-30)")
-    parser.add_argument("--qfr3", type=int, default=16, help="Quantization bits for SH band 3 (0-30)")
-    parser.add_argument("--qo", type=int, default=16, help="Quantization bits for opacity (0-30)")
-    parser.add_argument("--qs", type=int, default=16, help="Quantization bits for scale (0-30)")
-    parser.add_argument("--qr", type=int, default=16, help="Quantization bits for rotation (0-30)")
-    parser.add_argument("--cl", type=int, default=7, help="Compression level (0-10)")
+    # LTS quantization parameters (0=lossless, higher=more bits=better quality)
+    parser.add_argument("--eg", type=int, default=DEFAULT_EG, help="Quantization bits for position (0-30)")
+    parser.add_argument("--eo", type=int, default=DEFAULT_EO, help="Quantization bits for opacity (0-30)")
+    parser.add_argument("--et", type=int, default=DEFAULT_ET, help="Quantization bits for rotation/scales (0-30)")
+    parser.add_argument("--es", type=int, default=DEFAULT_ES, help="Quantization bits for SH (0-30)")
+    parser.add_argument("--cl", type=int, default=DEFAULT_CL, help="Compression level (0-10)")
 
     args = parser.parse_args()
 
     os.makedirs(args.output_folder, exist_ok=True)
     os.makedirs(args.output_ply_folder, exist_ok=True)
+
+    # Draco parameters
+    qp = args.eg
+    qfd = args.es
+    qfr1 = args.es
+    qfr2 = args.es
+    qfr3 = args.es
+    qo = args.eo
+    qs = args.et
+    qr = args.et
+    cl = args.cl
 
     # --- Print configuration ---
     print("=" * 70)
@@ -107,8 +119,8 @@ if __name__ == "__main__":
     print(f"  Frames:             {args.frame_start} to {args.frame_end} (interval={args.interval})")
     print(f"  Scene:              {args.scene_name}")
     print(f"  SH degree:          {args.sh_degree}")
-    print(f"  Quantization:       qp={args.qp} qfd={args.qfd} qfr1={args.qfr1} qfr2={args.qfr2} qfr3={args.qfr3} qo={args.qo} qs={args.qs} qr={args.qr}")
-    print(f"  Compression level:  {args.cl}")
+    print(f"  Quantization:       qp={qp} qfd={qfd} qfr1={qfr1} qfr2={qfr2} qfr3={qfr3} qo={qo} qs={qs} qr={qr}")
+    print(f"  Compression level:  {cl}")
     print("=" * 70)
 
     # --- Per-frame loop ---
@@ -131,10 +143,10 @@ if __name__ == "__main__":
         t_enc_start = time.perf_counter()
         bitstream = encode_dracogs(
             gs_data,
-            qp=args.qp, qfd=args.qfd,
-            qfr1=args.qfr1, qfr2=args.qfr2, qfr3=args.qfr3,
-            qo=args.qo, qs=args.qs, qr=args.qr,
-            cl=args.cl,
+            qp=qp, qfd=qfd,
+            qfr1=qfr1, qfr2=qfr2, qfr3=qfr3,
+            qo=qo, qs=qs, qr=qr,
+            cl=cl,
         )
         t_enc_end = time.perf_counter()
         encode_time_ms = (t_enc_end - t_enc_start) * 1000
@@ -201,15 +213,15 @@ if __name__ == "__main__":
         config_out = {
             "scene_name": args.scene_name,
             "sh_degree": args.sh_degree,
-            "qp": args.qp,
-            "qfd": args.qfd,
-            "qfr1": args.qfr1,
-            "qfr2": args.qfr2,
-            "qfr3": args.qfr3,
-            "qo": args.qo,
-            "qs": args.qs,
-            "qr": args.qr,
-            "cl": args.cl,
+            "qp": qp,
+            "qfd": qfd,
+            "qfr1": qfr1,
+            "qfr2": qfr2,
+            "qfr3": qfr3,
+            "qo": qo,
+            "qs": qs,
+            "qr": qr,
+            "cl": cl,
             "frame_start": args.frame_start,
             "frame_end": args.frame_end,
             "interval": args.interval,
