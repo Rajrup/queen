@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# pyright: reportMissingImports=false
 """Collect baseline outputs and generate per-frame comparison plots for QUEEN."""
 
 from __future__ import annotations
@@ -9,22 +10,24 @@ import os
 import sys
 from typing import Any, Optional
 
-import matplotlib
+import matplotlib  # type: ignore[reportMissingImports]
 matplotlib.use("Agg")
-import matplotlib.pyplot as plt
+import matplotlib.pyplot as plt  # type: ignore[reportMissingImports]
 import numpy as np
 
 
 DATASET_NAME = "Neural_3D_Video"
 DATA_PATH = "/synology/rajrup/Queen"
+VIDEOGS_QPS = [0, 4, 10, 15, 20, 25]
+VIDEOGS_GROUP_SIZE = 20
 
 EXPERIMENTS: dict[str, list[int]] = {
-    "cook_spinach": [1, 51, 101, 151],
-    "coffee_martini": [1, 51, 101, 151],
-    "cut_roasted_beef": [1, 51, 101, 151],
-    "flame_salmon_1": [1, 51, 101, 151],
-    "flame_steak": [1, 51, 101, 151],
-    "sear_steak": [1, 51, 101, 151],
+    "cook_spinach": [1],
+    "coffee_martini": [1],
+    "cut_roasted_beef": [1],
+    "flame_salmon_1": [1],
+    "flame_steak": [1],
+    "sear_steak": [1],
 }
 
 BASELINES: dict[str, dict[str, Any]] = {
@@ -40,7 +43,7 @@ BASELINES: dict[str, dict[str, Any]] = {
     },
     "VideoGS": {
         "subdir": "videogs",
-        "output_tag": "qp_25",
+        "output_tags": [f"qp_{qp}" for qp in VIDEOGS_QPS],
         "benchmark_csv": "benchmark_videogs_pipeline.csv",
     },
 }
@@ -68,7 +71,10 @@ OUTPUT_DIR = os.path.join(SCRIPT_DIR, "baseline_comparison_res")
 CSV_COLUMNS = [
     "sequence_name",
     "baseline",
+    "baseline_family",
+    "videogs_qp",
     "frame_id",
+    "gop_anchor_frame",
     "compressed_size_bytes",
     "compressed_mb",
     "uncompressed_size_bytes",
@@ -95,11 +101,15 @@ def _iter_frame_groups(rows: list[dict[str, Any]]) -> list[tuple[str, int, list[
     by_seq = _group_by(rows, "sequence_name")
     grouped: list[tuple[str, int, list[dict[str, Any]]]] = []
     for seq_name, seq_rows in sorted(by_seq.items()):
-        frame_ids = sorted({int(r["frame_id"]) for r in seq_rows})
-        for frame_id in frame_ids:
-            frame_rows = [r for r in seq_rows if int(r["frame_id"]) == frame_id]
-            if frame_rows:
-                grouped.append((seq_name, frame_id, frame_rows))
+        anchor_ids = sorted({int(r.get("gop_anchor_frame", r["frame_id"])) for r in seq_rows})
+        for anchor_id in anchor_ids:
+            anchor_rows = [
+                r
+                for r in seq_rows
+                if int(r.get("gop_anchor_frame", r["frame_id"])) == anchor_id
+            ]
+            if anchor_rows:
+                grouped.append((seq_name, anchor_id, anchor_rows))
     return grouped
 
 
@@ -124,9 +134,62 @@ def _model_root(sequence: str) -> str:
     )
 
 
-def _output_folder(sequence: str, baseline_key: str) -> str:
-    cfg = BASELINES[baseline_key]
-    return os.path.join(_model_root(sequence), "compression", cfg["subdir"], cfg["output_tag"])
+def _selected_to_span(frame_ids: list[int]) -> tuple[int, int, int]:
+    if not frame_ids:
+        raise ValueError("Frame list must not be empty")
+    sorted_ids = sorted(set(int(v) for v in frame_ids))
+    return sorted_ids[0], sorted_ids[-1], 1
+
+
+def _frame_span_tag(frame_start: int, frame_end: int, interval: int) -> str:
+    return f"frames_{frame_start}_{frame_end}_int_{interval}"
+
+
+def _candidate_output_folders(
+    sequence: str,
+    subdir: str,
+    output_tag: str,
+    frame_start: int,
+    frame_end: int,
+    interval: int,
+) -> list[str]:
+    legacy_root = os.path.join(_model_root(sequence), "compression", subdir, output_tag)
+    return [
+        os.path.join(legacy_root, _frame_span_tag(frame_start, frame_end, interval)),
+        legacy_root,
+    ]
+
+
+def _resolve_output_folder(
+    sequence: str,
+    subdir: str,
+    output_tag: str,
+    frame_start: int,
+    frame_end: int,
+    interval: int,
+    benchmark_csv_name: str,
+) -> str:
+    for folder in _candidate_output_folders(
+        sequence,
+        subdir,
+        output_tag,
+        frame_start,
+        frame_end,
+        interval,
+    ):
+        benchmark_path = os.path.join(folder, benchmark_csv_name)
+        eval_json_path = os.path.join(folder, "evaluation", "evaluation_results.json")
+        if os.path.isfile(benchmark_path) or os.path.isfile(eval_json_path):
+            return folder
+
+    return _candidate_output_folders(
+        sequence,
+        subdir,
+        output_tag,
+        frame_start,
+        frame_end,
+        interval,
+    )[0]
 
 
 def _resolve_livogs_hull_csv(sequence: str, frame_id: int) -> Optional[str]:
@@ -174,8 +237,11 @@ def _load_sequence_results(
     output_folder: str,
     sequence: str,
     baseline: str,
+    baseline_family: str,
+    videogs_qp: Optional[int],
     benchmark_csv_name: str,
     frame_ids: list[int],
+    gop_anchor_frame: Optional[int] = None,
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
 
@@ -232,7 +298,10 @@ def _load_sequence_results(
             {
                 "sequence_name": sequence,
                 "baseline": baseline,
+                "baseline_family": baseline_family,
+                "videogs_qp": videogs_qp,
                 "frame_id": fid,
+                "gop_anchor_frame": int(gop_anchor_frame) if gop_anchor_frame is not None else fid,
                 "compressed_size_bytes": comp,
                 "compressed_mb": comp / (1024 * 1024),
                 "uncompressed_size_bytes": uncomp,
@@ -251,20 +320,122 @@ def _load_sequence_results(
     return rows
 
 
+def _baseline_sort_key(rows_for_baseline: list[dict[str, Any]]) -> tuple[int, float, str]:
+    sample = rows_for_baseline[0]
+    family = str(sample.get("baseline_family", sample.get("baseline", "")))
+    label = str(sample.get("baseline", family))
+    family_rank = {"DracoGS": 0, "MesonGS": 1, "VideoGS": 2}.get(family, 99)
+    qp = sample.get("videogs_qp")
+    qp_sort = float(qp) if isinstance(qp, (int, float)) else -1.0
+    return family_rank, qp_sort, label
+
+
+def _style_for_baseline(rows_for_baseline: list[dict[str, Any]]) -> dict[str, Any]:
+    sample = rows_for_baseline[0]
+    family = str(sample.get("baseline_family", sample.get("baseline", "")))
+    label = str(sample.get("baseline", family))
+
+    base_style = BASELINE_STYLES.get(
+        family,
+        {"color": "#7f7f7f", "marker": "o", "label": label},
+    )
+    style = {
+        "color": base_style["color"],
+        "marker": base_style["marker"],
+        "label": label,
+    }
+
+    qp = sample.get("videogs_qp")
+    if family == "VideoGS" and isinstance(qp, int):
+        qp_palette = {
+            0: "#1b9e77",   # teal
+            4: "#d95f02",   # orange
+            10: "#7570b3",  # purple
+            15: "#e7298a",  # magenta
+            20: "#66a61e",  # green
+        }
+        qp_markers = {
+            0: "o",
+            4: "s",
+            10: "D",
+            15: "^",
+            20: "v",
+        }
+        style["color"] = qp_palette.get(qp, style["color"])
+        style["marker"] = qp_markers.get(qp, "o")
+
+    return style
+
+
 def collect_all_results() -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for sequence, frame_ids in EXPERIMENTS.items():
-        for baseline, cfg in BASELINES.items():
-            output_folder = _output_folder(sequence, baseline)
-            rows.extend(
-                _load_sequence_results(
-                    output_folder,
-                    sequence,
-                    baseline,
-                    cfg["benchmark_csv"],
-                    frame_ids,
-                )
-            )
+        frame_start, frame_end, interval = _selected_to_span(frame_ids)
+        for baseline_family, cfg in BASELINES.items():
+            output_tags = cfg.get("output_tags", [cfg.get("output_tag")])
+            for output_tag in output_tags:
+                if not output_tag:
+                    continue
+
+                videogs_qp: Optional[int] = None
+                baseline_label = baseline_family
+                if baseline_family == "VideoGS" and str(output_tag).startswith("qp_"):
+                    qp_suffix = str(output_tag).split("_", maxsplit=1)[1]
+                    try:
+                        videogs_qp = int(qp_suffix)
+                    except ValueError:
+                        videogs_qp = None
+                    baseline_label = (
+                        f"VideoGS (QP={videogs_qp})"
+                        if videogs_qp is not None
+                        else f"VideoGS ({output_tag})"
+                    )
+
+                if baseline_family == "VideoGS":
+                    for anchor in frame_ids:
+                        gop_frame_ids = list(range(int(anchor), int(anchor) + VIDEOGS_GROUP_SIZE))
+                        output_folder = _resolve_output_folder(
+                            sequence,
+                            cfg["subdir"],
+                            str(output_tag),
+                            gop_frame_ids[0],
+                            gop_frame_ids[-1],
+                            1,
+                            cfg["benchmark_csv"],
+                        )
+                        rows.extend(
+                            _load_sequence_results(
+                                output_folder,
+                                sequence,
+                                baseline_label,
+                                baseline_family,
+                                videogs_qp,
+                                cfg["benchmark_csv"],
+                                gop_frame_ids,
+                                gop_anchor_frame=int(anchor),
+                            )
+                        )
+                else:
+                    output_folder = _resolve_output_folder(
+                        sequence,
+                        cfg["subdir"],
+                        str(output_tag),
+                        frame_start,
+                        frame_end,
+                        interval,
+                        cfg["benchmark_csv"],
+                    )
+                    rows.extend(
+                        _load_sequence_results(
+                            output_folder,
+                            sequence,
+                            baseline_label,
+                            baseline_family,
+                            videogs_qp,
+                            cfg["benchmark_csv"],
+                            frame_ids,
+                        )
+                    )
     return rows
 
 
@@ -282,28 +453,68 @@ def plot_psnr_size_per_frame(rows: list[dict[str, Any]], plot_dir: str) -> None:
     for seq_name, frame_id, frame_rows in _iter_frame_groups(rows):
         fig, ax = plt.subplots(figsize=(9, 6))
         by_baseline = _group_by(frame_rows, "baseline")
+        sorted_baselines = sorted(by_baseline.items(), key=lambda item: _baseline_sort_key(item[1]))
 
-        for baseline in BASELINES:
-            if baseline not in by_baseline:
-                continue
-            bl_rows = by_baseline[baseline]
-            style = BASELINE_STYLES[baseline]
-            xs = [r["compressed_mb"] for r in bl_rows]
-            ys = [r["decomp_psnr"] for r in bl_rows]
-            x = float(np.mean(xs))
-            y = float(np.mean(ys))
-            ax.scatter(
-                [x],
-                [y],
-                color=style["color"],
-                marker=style["marker"],
-                s=120,
-                alpha=1.0,
-                zorder=4,
-                edgecolors="black",
-                linewidths=0.8,
-                label=f"{style['label']} ({y:.2f} dB, {x:.2f} MB)",
-            )
+        x_values = [float(r["compressed_mb"]) for r in frame_rows if r.get("compressed_mb") is not None]
+        if x_values:
+            x_min = min(x_values)
+            x_max = max(x_values)
+            x_range = x_max - x_min
+            box_width = max(0.02, x_range * 0.025) if x_range > 0 else max(0.02, x_max * 0.025)
+        else:
+            box_width = 0.02
+
+        for _, bl_rows in sorted_baselines:
+            style = _style_for_baseline(bl_rows)
+            family = str(bl_rows[0].get("baseline_family", "")) if bl_rows else ""
+            if family == "VideoGS":
+                psnr_values = [float(r["decomp_psnr"]) for r in bl_rows if r.get("decomp_psnr") is not None]
+                size_values = [float(r["compressed_mb"]) for r in bl_rows if r.get("compressed_mb") is not None]
+                if not psnr_values or not size_values:
+                    continue
+                avg_size = float(np.mean(size_values))
+                median_psnr = float(np.median(psnr_values))
+                ax.boxplot(
+                    [psnr_values],
+                    positions=[avg_size],
+                    widths=[box_width],
+                    vert=True,
+                    patch_artist=True,
+                    manage_ticks=False,
+                    boxprops=dict(facecolor=style["color"], alpha=0.55, edgecolor=style["color"], linewidth=1.5),
+                    medianprops=dict(color="black", linewidth=2),
+                    whiskerprops=dict(color=style["color"], linewidth=1.3),
+                    capprops=dict(color=style["color"], linewidth=1.3),
+                    flierprops=dict(markerfacecolor=style["color"], markeredgecolor=style["color"], marker="o", markersize=4),
+                    zorder=4,
+                )
+                ax.scatter(
+                    [],
+                    [],
+                    color=style["color"],
+                    marker=style["marker"],
+                    s=80,
+                    label=f"{style['label']} (med {median_psnr:.2f} dB, {avg_size:.2f} MB)",
+                )
+            else:
+                xs = [r["compressed_mb"] for r in bl_rows if r.get("compressed_mb") is not None]
+                ys = [r["decomp_psnr"] for r in bl_rows if r.get("decomp_psnr") is not None]
+                if not xs or not ys:
+                    continue
+                x = float(np.mean(xs))
+                y = float(np.mean(ys))
+                ax.scatter(
+                    [x],
+                    [y],
+                    color=style["color"],
+                    marker=style["marker"],
+                    s=120,
+                    alpha=1.0,
+                    zorder=4,
+                    edgecolors="black",
+                    linewidths=0.8,
+                    label=f"{style['label']} ({y:.2f} dB, {x:.2f} MB)",
+                )
 
         if LIVOGS_HULL_ENABLED:
             hull_points = _load_livogs_hull_points(seq_name, frame_id)
@@ -324,26 +535,30 @@ def plot_psnr_size_per_frame(rows: list[dict[str, Any]], plot_dir: str) -> None:
                     label="LiVoGS hull",
                 )
 
-        gt_psnrs = [r["gt_psnr"] for r in frame_rows if r.get("gt_psnr") is not None]
-        if gt_psnrs:
-            gt_mean = float(np.mean(gt_psnrs))
+        anchor_gt_candidates = [
+            float(r["gt_psnr"])
+            for r in frame_rows
+            if r.get("gt_psnr") is not None and int(r.get("frame_id", -1)) == int(frame_id)
+        ]
+        if anchor_gt_candidates:
+            gt_anchor = anchor_gt_candidates[0]
             ax.axhline(
-                gt_mean,
+                gt_anchor,
                 color="black",
                 linestyle="--",
                 linewidth=1.4,
-                label=f"Uncompressed ({gt_mean:.2f} dB)",
+                label=f"GT anchor frame ({gt_anchor:.2f} dB)",
                 zorder=1,
             )
 
         ax.set_xlabel("Compressed Size (MB)", fontsize=11)
         ax.set_ylabel("PSNR (dB)", fontsize=11)
-        ax.set_title(f"PSNR-Size | {seq_name} | Frame {frame_id}", fontsize=13)
+        ax.set_title(f"PSNR-Size | {seq_name} | Anchor {frame_id}", fontsize=13)
         ax.grid(True, alpha=0.3)
         ax.legend(fontsize=9, loc="lower right")
         fig.tight_layout()
 
-        out_path = os.path.join(plot_dir, f"psnr_size_{seq_name}_frame{frame_id}.png")
+        out_path = os.path.join(plot_dir, f"psnr_size_{seq_name}_anchor{frame_id}.png")
         fig.savefig(out_path, dpi=150)
         plt.close(fig)
         print(f"  Saved: {out_path}")
@@ -352,11 +567,11 @@ def plot_psnr_size_per_frame(rows: list[dict[str, Any]], plot_dir: str) -> None:
 def plot_latency_method_per_frame(rows: list[dict[str, Any]], plot_dir: str) -> None:
     for seq_name, frame_id, frame_rows in _iter_frame_groups(rows):
         by_baseline = _group_by(frame_rows, "baseline")
-        baselines_present = [b for b in BASELINES if b in by_baseline]
+        baselines_present = sorted(by_baseline.keys(), key=lambda b: _baseline_sort_key(by_baseline[b]))
         if not baselines_present:
             continue
 
-        labels = [BASELINE_STYLES[b]["label"] for b in baselines_present]
+        labels = [_style_for_baseline(by_baseline[b])["label"] for b in baselines_present]
         encode_vals: list[float] = []
         decode_vals: list[float] = []
         for bl in baselines_present:
@@ -395,12 +610,12 @@ def plot_latency_method_per_frame(rows: list[dict[str, Any]], plot_dir: str) -> 
         ax.set_xticks(x)
         ax.set_xticklabels(labels, fontsize=10)
         ax.set_ylabel("Latency (ms/frame)", fontsize=11)
-        ax.set_title(f"Latency by Method | {seq_name} | Frame {frame_id}", fontsize=13)
+        ax.set_title(f"Latency by Method | {seq_name} | Anchor {frame_id}", fontsize=13)
         ax.grid(axis="y", alpha=0.3)
         ax.legend(fontsize=9)
         fig.tight_layout()
 
-        out_path = os.path.join(plot_dir, f"latency_method_{seq_name}_frame{frame_id}.png")
+        out_path = os.path.join(plot_dir, f"latency_method_{seq_name}_anchor{frame_id}.png")
         fig.savefig(out_path, dpi=150, bbox_inches="tight")
         plt.close(fig)
         print(f"  Saved: {out_path}")
@@ -409,11 +624,11 @@ def plot_latency_method_per_frame(rows: list[dict[str, Any]], plot_dir: str) -> 
 def plot_size_method_per_frame(rows: list[dict[str, Any]], plot_dir: str) -> None:
     for seq_name, frame_id, frame_rows in _iter_frame_groups(rows):
         by_baseline = _group_by(frame_rows, "baseline")
-        baselines_present = [b for b in BASELINES if b in by_baseline]
+        baselines_present = sorted(by_baseline.keys(), key=lambda b: _baseline_sort_key(by_baseline[b]))
         if not baselines_present:
             continue
 
-        labels = [BASELINE_STYLES[b]["label"] for b in baselines_present]
+        labels = [_style_for_baseline(by_baseline[b])["label"] for b in baselines_present]
         compressed_vals: list[float] = []
         uncompressed_vals: list[float] = []
         colors: list[str] = []
@@ -423,7 +638,7 @@ def plot_size_method_per_frame(rows: list[dict[str, Any]], plot_dir: str) -> Non
             uncomp = [float(r["uncompressed_mb"]) for r in bl_rows if r.get("uncompressed_mb") is not None]
             compressed_vals.append(float(np.mean(comp)) if comp else np.nan)
             uncompressed_vals.append(float(np.mean(uncomp)) if uncomp else np.nan)
-            colors.append(BASELINE_STYLES[bl]["color"])
+            colors.append(_style_for_baseline(bl_rows)["color"])
 
         x = np.arange(len(baselines_present))
         fig, ax = plt.subplots(figsize=(8.5, 5.5))
@@ -443,23 +658,24 @@ def plot_size_method_per_frame(rows: list[dict[str, Any]], plot_dir: str) -> Non
         ax.set_xticks(x)
         ax.set_xticklabels(labels, fontsize=10)
         ax.set_ylabel("Compressed Size (MB/frame)", fontsize=11)
-        ax.set_title(f"Size by Method | {seq_name} | Frame {frame_id}", fontsize=13)
+        ax.set_title(f"Size by Method | {seq_name} | Anchor {frame_id}", fontsize=13)
         ax.grid(axis="y", alpha=0.3)
 
         legend_handles = []
         legend_labels = []
         for i, bl in enumerate(baselines_present):
+            bl_label = _style_for_baseline(by_baseline[bl])["label"]
             legend_handles.append(bars[i])
             if np.isfinite(uncompressed_vals[i]):
                 legend_labels.append(
-                    f"{BASELINE_STYLES[bl]['label']} (Uncompressed: {uncompressed_vals[i]:.2f} MB)"
+                    f"{bl_label} (Uncompressed: {uncompressed_vals[i]:.2f} MB)"
                 )
             else:
-                legend_labels.append(f"{BASELINE_STYLES[bl]['label']} (Uncompressed: N/A)")
+                legend_labels.append(f"{bl_label} (Uncompressed: N/A)")
         ax.legend(legend_handles, legend_labels, fontsize=8, loc="upper left")
 
         fig.tight_layout()
-        out_path = os.path.join(plot_dir, f"size_method_{seq_name}_frame{frame_id}.png")
+        out_path = os.path.join(plot_dir, f"size_method_{seq_name}_anchor{frame_id}.png")
         fig.savefig(out_path, dpi=150, bbox_inches="tight")
         plt.close(fig)
         print(f"  Saved: {out_path}")
@@ -483,7 +699,8 @@ def main() -> None:
         sys.exit(1)
 
     by_baseline = _group_by(rows, "baseline")
-    for bl in BASELINES:
+    sorted_baselines = sorted(by_baseline.keys(), key=lambda b: _baseline_sort_key(by_baseline[b]))
+    for bl in sorted_baselines:
         bl_rows = by_baseline.get(bl, [])
         if bl_rows:
             avg_psnr = np.mean([r["decomp_psnr"] for r in bl_rows])
