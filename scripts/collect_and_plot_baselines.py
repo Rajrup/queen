@@ -8,6 +8,7 @@ import csv
 import json
 import os
 import sys
+from functools import lru_cache
 from typing import Any, Optional
 
 import matplotlib  # type: ignore[reportMissingImports]
@@ -139,6 +140,48 @@ def _selected_to_span(frame_ids: list[int]) -> tuple[int, int, int]:
         raise ValueError("Frame list must not be empty")
     sorted_ids = sorted(set(int(v) for v in frame_ids))
     return sorted_ids[0], sorted_ids[-1], 1
+
+
+@lru_cache(maxsize=None)
+def _sequence_max_frame(sequence: str) -> int:
+    frames_root = os.path.join(_model_root(sequence), "frames")
+    if not os.path.isdir(frames_root):
+        raise FileNotFoundError(f"Frames root not found: {frames_root}")
+
+    frame_ids = sorted(
+        int(name)
+        for name in os.listdir(frames_root)
+        if name.isdigit()
+        and os.path.isdir(os.path.join(frames_root, name))
+        and (
+            os.path.isfile(os.path.join(frames_root, name, "point_cloud.ply"))
+            or os.path.isdir(os.path.join(frames_root, name, "point_cloud"))
+        )
+    )
+    if not frame_ids:
+        raise FileNotFoundError(
+            f"No frame folders with point_cloud data found under {frames_root}"
+        )
+
+    return frame_ids[-1]
+
+
+def _videogs_gop_frame_ids(sequence: str, anchor: int) -> list[int]:
+    max_frame = _sequence_max_frame(sequence)
+    if anchor > max_frame:
+        raise ValueError(
+            f"VideoGS anchor frame {anchor} exceeds last available frame {max_frame} "
+            f"for sequence {sequence}"
+        )
+
+    gop_end = min(int(anchor) + VIDEOGS_GROUP_SIZE - 1, max_frame)
+    frame_ids = list(range(int(anchor), gop_end + 1))
+    if not frame_ids:
+        raise ValueError(
+            f"Resolved empty VideoGS GOP for sequence {sequence}: "
+            f"anchor={anchor}, end={gop_end}"
+        )
+    return frame_ids
 
 
 def _frame_span_tag(frame_start: int, frame_end: int, interval: int) -> str:
@@ -393,7 +436,7 @@ def collect_all_results() -> list[dict[str, Any]]:
 
                 if baseline_family == "VideoGS":
                     for anchor in frame_ids:
-                        gop_frame_ids = list(range(int(anchor), int(anchor) + VIDEOGS_GROUP_SIZE))
+                        gop_frame_ids = _videogs_gop_frame_ids(sequence, int(anchor))
                         output_folder = _resolve_output_folder(
                             sequence,
                             cfg["subdir"],

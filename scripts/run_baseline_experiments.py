@@ -18,6 +18,7 @@ import subprocess
 import time
 from dataclasses import dataclass
 from datetime import datetime
+from functools import lru_cache
 from pathlib import Path
 from typing import Callable
 
@@ -149,6 +150,54 @@ def selected_to_span(frame_ids: list[int]) -> tuple[int, int, int]:
         raise ValueError("Frame list must not be empty")
     sorted_ids = sorted(set(int(v) for v in frame_ids))
     return sorted_ids[0], sorted_ids[-1], 1
+
+
+@lru_cache(maxsize=None)
+def get_sequence_max_frame(sequence: str) -> int:
+    frames_root = (
+        Path(DATA_PATH)
+        / "pretrained_output"
+        / DATASET_NAME
+        / f"queen_compressed_{sequence}"
+        / "frames"
+    )
+    if not frames_root.is_dir():
+        raise FileNotFoundError(f"Frames root not found: {frames_root}")
+
+    frame_ids = sorted(
+        int(entry.name)
+        for entry in frames_root.iterdir()
+        if entry.is_dir()
+        and entry.name.isdigit()
+        and (
+            (entry / "point_cloud.ply").is_file()
+            or (entry / "point_cloud").is_dir()
+        )
+    )
+    if not frame_ids:
+        raise FileNotFoundError(
+            f"No frame folders with point_cloud data found under {frames_root}"
+        )
+
+    return frame_ids[-1]
+
+
+def resolve_videogs_span(sequence: str, anchor_frame: int) -> tuple[int, int]:
+    max_frame = get_sequence_max_frame(sequence)
+    if anchor_frame > max_frame:
+        raise ValueError(
+            f"VideoGS anchor frame {anchor_frame} exceeds last available frame {max_frame} "
+            f"for sequence {sequence}"
+        )
+
+    gop_start = anchor_frame
+    gop_end = min(anchor_frame + VIDEOGS_GROUP_SIZE - 1, max_frame)
+    if gop_end < gop_start:
+        raise ValueError(
+            f"Resolved empty VideoGS GOP for sequence {sequence}: "
+            f"start={gop_start}, end={gop_end}"
+        )
+    return gop_start, gop_end
 
 
 def frame_span_tag(frame_start: int, frame_end: int, interval: int) -> str:
@@ -332,8 +381,7 @@ def run_mesongs(sequence: str, selected_frames: list[int], dry_run: bool, skip_e
 
 def run_videogs(sequence: str, selected_frames: list[int], dry_run: bool, skip_existing: bool) -> None:
     for anchor_frame in sorted(set(int(v) for v in selected_frames)):
-        gop_start = anchor_frame
-        gop_end = anchor_frame + VIDEOGS_GROUP_SIZE - 1
+        gop_start, gop_end = resolve_videogs_span(sequence, anchor_frame)
         for qp in VIDEOGS_QPS:
             paths = get_paths(
                 sequence,
@@ -394,8 +442,7 @@ def get_expected_output_folders(
     if baseline == "videogs":
         output_folders: list[str] = []
         for anchor_frame in sorted(set(int(v) for v in selected_frames)):
-            gop_start = anchor_frame
-            gop_end = anchor_frame + VIDEOGS_GROUP_SIZE - 1
+            gop_start, gop_end = resolve_videogs_span(sequence, anchor_frame)
             output_folders.extend(
                 get_output_folder(
                     baseline,
