@@ -8,21 +8,28 @@ import itertools
 from typing import Any, Optional
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, SCRIPT_DIR)
+QUEEN_ROOT = os.path.dirname(os.path.dirname(SCRIPT_DIR))
+if QUEEN_ROOT not in sys.path:
+    sys.path.insert(0, QUEEN_ROOT)
 
-from collect_rd_results import collect_rd_root, _infer_sequence_name
-from rd_pipeline.plot import plot_rd_scatter
+from scripts.livogs_baseline.collect_rd_results import collect_rd_root, _infer_sequence_name
+from scripts.livogs_baseline.rd_pipeline.plot import plot_rd_scatter
 
-RD_OUTPUT_ROOTS: list[dict[str, Any]] = [
-    {
-        "path": "/synology/rajrup/Queen/pretrained_output/Neural_3D_Video/queen_compressed_flame_salmon_1/compression/livogs_rd",
-        "frame_ids": [1],
-    },
-    {
-        "path": "/synology/rajrup/Queen/pretrained_output/Neural_3D_Video/queen_compressed_sear_steak/compression/livogs_rd",
-        "frame_ids": [1],
-    },
+PRETRAINED_OUTPUT_ROOT = "/synology/rajrup/Queen/pretrained_output"
+DATASET_NAME = "Neural_3D_Video"
+RD_SUBDIR_NAME = "livogs_rd_nvcomp"
+SEQUENCE_NAMES = [
+    "coffee_martini",
+    "cook_spinach",
+    "cut_roasted_beef",
+    "flame_salmon_1",
+    "flame_steak",
+    "sear_steak",
 ]
+FRAME_IDS = [1]
+SEQUENCE_FRAME_ID_OVERRIDES: dict[str, list[int]] = {}
+
+RD_OUTPUT_ROOTS_OVERRIDE: list[dict[str, Any]] = []
 
 SCATTER_PSNR_RANGE: Optional[tuple[float, float]] = None
 
@@ -37,12 +44,41 @@ SCATTER_SPEC: dict[str, Any] = {
     },
 }
 
-FORCE_COLLECT: bool = False
+FORCE_COLLECT: bool = True
 DEFAULT_PSNR_RANGE: Optional[tuple[float, float]] = None
 PLOT_OUTPUT_DIR: Optional[str] = None
 COLLECTED_CSV: Optional[str] = None
+WRITE_MISSING_REPORT: bool = True
+PLOT_DEDUPLICATE: bool = True
 
 KNOB_NAMES = frozenset({"depth", "qp_sh", "beta", "qp_quats", "qp_scales", "qp_opacity"})
+
+
+def _build_default_rd_output_roots() -> list[dict[str, Any]]:
+    roots: list[dict[str, Any]] = []
+    for seq in SEQUENCE_NAMES:
+        frame_ids = SEQUENCE_FRAME_ID_OVERRIDES.get(seq, FRAME_IDS)
+        roots.append(
+            {
+                "path": os.path.join(
+                    PRETRAINED_OUTPUT_ROOT,
+                    DATASET_NAME,
+                    f"queen_compressed_{seq}",
+                    "compression",
+                    RD_SUBDIR_NAME,
+                ),
+                "frame_ids": list(frame_ids),
+                "name": seq,
+                "dataset": DATASET_NAME,
+            }
+        )
+    return roots
+
+
+def _resolve_rd_output_roots() -> list[dict[str, Any]]:
+    if RD_OUTPUT_ROOTS_OVERRIDE:
+        return RD_OUTPUT_ROOTS_OVERRIDE
+    return _build_default_rd_output_roots()
 
 
 def _normalize_psnr_range(raw_range: Any) -> Optional[tuple[float, float]]:
@@ -248,22 +284,23 @@ def _write_missing_report_csv(
 
 def collect_all() -> list[dict[str, str]]:
     import csv as _csv
-    from collect_rd_results import CSV_COLUMNS
+    from scripts.livogs_baseline.collect_rd_results import CSV_COLUMNS
 
+    rd_output_roots = _resolve_rd_output_roots()
     collected: list[dict[str, str]] = []
 
-    if COLLECTED_CSV is not None and len(RD_OUTPUT_ROOTS) > 1:
-        print("[WARN] COLLECTED_CSV is ignored when multiple RD_OUTPUT_ROOTS are configured.")
+    if COLLECTED_CSV is not None and len(rd_output_roots) > 1:
+        print("[WARN] COLLECTED_CSV is ignored when multiple RD roots are configured.")
         print("       Writing one CSV per root instead.")
 
-    for entry in RD_OUTPUT_ROOTS:
+    for entry in rd_output_roots:
         rd_root = entry["path"]
         seq_name = entry.get("name") or _infer_sequence_name(rd_root)
         dataset_name = entry.get("dataset") or _infer_dataset_name(rd_root)
         frame_ids = entry.get("frame_ids")
         csv_path = entry.get("output_csv")
         if csv_path is None:
-            if COLLECTED_CSV is not None and len(RD_OUTPUT_ROOTS) == 1:
+            if COLLECTED_CSV is not None and len(rd_output_roots) == 1:
                 csv_path = COLLECTED_CSV
             else:
                 csv_path = _default_collected_csv(rd_root)
@@ -353,35 +390,43 @@ def generate_scatter_plots(
             hull_csv_path=hull_csv_path,
             psnr_range=psnr_range,
             fixed=fixed,
-            deduplicate=True,
+            deduplicate=PLOT_DEDUPLICATE,
         )
 
-        missing_keys, expected, observed, missing = _expected_missing_combos(frame_rows, fixed)
-        if missing_keys:
-            print(
-                f"[WARN] Missing-report skipped for {sequence_name} frame {frame_id}: "
-                f"fixed does not include {missing_keys}"
-            )
-        else:
-            print(
-                f"  Coverage {sequence_name} frame {frame_id}: "
-                f"observed {len(observed)}/{len(expected)}, missing {len(missing)}"
-            )
-            _write_missing_report_csv(
-                output_path=missing_csv_path,
-                sequence_name=sequence_name,
-                dataset_name=dataset_name,
-                frame_id=frame_id,
-                missing=missing,
-            )
-            print(f"  Missing report: {missing_csv_path}")
+        if WRITE_MISSING_REPORT:
+            missing_keys, expected, observed, missing = _expected_missing_combos(frame_rows, fixed)
+            if missing_keys:
+                print(
+                    f"[WARN] Missing-report skipped for {sequence_name} frame {frame_id}: "
+                    f"fixed does not include {missing_keys}"
+                )
+            else:
+                print(
+                    f"  Coverage {sequence_name} frame {frame_id}: "
+                    f"observed {len(observed)}/{len(expected)}, missing {len(missing)}"
+                )
+                _write_missing_report_csv(
+                    output_path=missing_csv_path,
+                    sequence_name=sequence_name,
+                    dataset_name=dataset_name,
+                    frame_id=frame_id,
+                    missing=missing,
+                )
+                print(f"  Missing report: {missing_csv_path}")
 
 
 def main() -> None:
+    rd_output_roots = _resolve_rd_output_roots()
     sep = "=" * 70
     print(sep)
     print("LiVoGS RD Hull Plot Pipeline (QUEEN)")
-    print(f"  RD roots:       {len(RD_OUTPUT_ROOTS)}")
+    print(f"  RD roots:       {len(rd_output_roots)}")
+    print(f"  Sequences:      {SEQUENCE_NAMES}")
+    print(f"  Frame IDs:      {FRAME_IDS}")
+    print(
+        "  Flags: "
+        f"force_collect={FORCE_COLLECT}, write_missing_report={WRITE_MISSING_REPORT}, deduplicate={PLOT_DEDUPLICATE}"
+    )
     print("  Scatter specs:  1")
     print(sep)
 
