@@ -1,4 +1,5 @@
 results/
+scripts/baseline_comparison_res
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

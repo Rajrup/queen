@@ -15,16 +15,31 @@ if QUEEN_ROOT not in sys.path:
 from scripts.livogs_baseline.collect_rd_results import collect_rd_root, _infer_sequence_name
 from scripts.livogs_baseline.rd_pipeline.plot import plot_rd_scatter
 
-PRETRAINED_OUTPUT_ROOT = "/synology/rajrup/Queen/pretrained_output"
-DATASET_NAME = "Neural_3D_Video"
-RD_SUBDIR_NAME = "livogs_rd_nvcomp"
-SEQUENCE_NAMES = [
-    "coffee_martini",
-    "cook_spinach",
-    "cut_roasted_beef",
-    "flame_salmon_1",
-    "flame_steak",
-    "sear_steak",
+RD_OUTPUT_ROOTS: list[dict[str, Any]] = [
+    {
+        "path": "/synology/rajrup/Queen/pretrained_output/Neural_3D_Video/queen_compressed_coffee_martini/compression/livogs_rd_nvcomp",
+        "frame_ids": [1],
+    },
+    {
+        "path": "/synology/rajrup/Queen/pretrained_output/Neural_3D_Video/queen_compressed_cook_spinach/compression/livogs_rd_nvcomp",
+        "frame_ids": [1],
+    },
+    {
+        "path": "/synology/rajrup/Queen/pretrained_output/Neural_3D_Video/queen_compressed_cut_roasted_beef/compression/livogs_rd_nvcomp",
+        "frame_ids": [1],
+    },
+    {
+        "path": "/synology/rajrup/Queen/pretrained_output/Neural_3D_Video/queen_compressed_flame_salmon_1/compression/livogs_rd_nvcomp",
+        "frame_ids": [1],
+    },
+    {
+        "path": "/synology/rajrup/Queen/pretrained_output/Neural_3D_Video/queen_compressed_flame_steak/compression/livogs_rd_nvcomp",
+        "frame_ids": [1],
+    },
+    {
+        "path": "/synology/rajrup/Queen/pretrained_output/Neural_3D_Video/queen_compressed_sear_steak/compression/livogs_rd_nvcomp",
+        "frame_ids": [1],
+    },
 ]
 FRAME_IDS = [1]
 SEQUENCE_FRAME_ID_OVERRIDES: dict[str, list[int]] = {}

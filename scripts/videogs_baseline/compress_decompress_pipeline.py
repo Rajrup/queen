@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# pyright: reportMissingImports=false
 """
 VideoGS Combined Compress + Decompress Pipeline (no intermediate PNG).
 
@@ -25,9 +26,12 @@ from tqdm import tqdm
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 _QUEEN_ROOT = os.path.dirname(os.path.dirname(_THIS_DIR))
 _VIDEOGS_COMPRESSION = os.path.join(_QUEEN_ROOT, "VideoGS", "compression")
+_BACKUP_DIR = os.path.join(_THIS_DIR, "backup")
 
 if _VIDEOGS_COMPRESSION not in sys.path:
     sys.path.insert(0, _VIDEOGS_COMPRESSION)
+if _BACKUP_DIR not in sys.path:
+    sys.path.insert(0, _BACKUP_DIR)
 if _THIS_DIR not in sys.path:
     sys.path.insert(0, _THIS_DIR)
 
@@ -172,6 +176,7 @@ if __name__ == "__main__":
         valid_frames = [f for f in frames if f in quantized]
         if not valid_frames:
             continue
+        anchor_frame = valid_frames[0]
 
         # ==================================================================
         # COMPRESS — Phase 2: Encode channels via raw-video pipe
@@ -232,6 +237,7 @@ if __name__ == "__main__":
             )
             t1 = time.perf_counter()
             dequantize_ms = (t1 - t0) * 1000
+            attributed_compressed_bytes = int(compressed_per_frame)
 
             frame_str = str(frame).zfill(4)
             frame_ply_dir = os.path.join(
@@ -246,6 +252,7 @@ if __name__ == "__main__":
 
             benchmark_rows.append({
                 "frame": frame,
+                "is_anchor_frame": int(frame == anchor_frame),
                 "quantize_ms": quantize_ms[frame],
                 "encode_ms": encode_ms_per_frame,
                 "decode_ms": decode_ms_per_frame,
@@ -253,7 +260,9 @@ if __name__ == "__main__":
                 "total_encode_ms": quantize_ms[frame] + encode_ms_per_frame,
                 "total_decode_ms": decode_ms_per_frame + dequantize_ms,
                 "uncompressed_size_bytes": frame_meta[frame]["uncompressed_size"],
-                "compressed_size_bytes": int(compressed_per_frame),
+                "compressed_size_bytes": attributed_compressed_bytes,
+                "compressed_size_gop_avg_bytes": int(compressed_per_frame),
+                "compressed_size_gop_total_bytes": int(group_compressed_bytes),
                 "original_points": frame_meta[frame]["num_points"],
             })
 
@@ -261,7 +270,7 @@ if __name__ == "__main__":
                 f"  Frame {frame}: N={frame_meta[frame]['num_points']}, "
                 f"enc={quantize_ms[frame] + encode_ms_per_frame:.1f} ms, "
                 f"dec={decode_ms_per_frame + dequantize_ms:.1f} ms, "
-                f"comp={compressed_per_frame / 1024 / 1024:.2f} MB"
+                f"comp(attr_gop_avg)={attributed_compressed_bytes / 1024 / 1024:.2f} MB"
             )
 
         del decoded_images
@@ -298,6 +307,8 @@ if __name__ == "__main__":
                 "frame_id", "quantize_ms", "encode_ms", "decode_ms",
                 "dequantize_ms", "total_encode_ms", "total_decode_ms",
                 "uncompressed_size_bytes", "compressed_size_bytes",
+                "compressed_size_gop_avg_bytes", "compressed_size_gop_total_bytes",
+                "is_anchor_frame",
                 "original_points",
             ])
             for r in benchmark_rows:
@@ -311,6 +322,9 @@ if __name__ == "__main__":
                     f"{r['total_decode_ms']:.2f}",
                     r["uncompressed_size_bytes"],
                     r["compressed_size_bytes"],
+                    r["compressed_size_gop_avg_bytes"],
+                    r["compressed_size_gop_total_bytes"],
+                    r["is_anchor_frame"],
                     r["original_points"],
                 ])
 
