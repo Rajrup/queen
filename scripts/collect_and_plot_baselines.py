@@ -19,16 +19,16 @@ import numpy as np
 
 DATASET_NAME = "Neural_3D_Video"
 DATA_PATH = "/synology/rajrup/Queen"
-VIDEOGS_QPS = [0, 4, 10, 15, 20, 25]
+VIDEOGS_QPS = [25]
 VIDEOGS_GROUP_SIZE = 20
 
 EXPERIMENTS: dict[str, list[int]] = {
-    "cook_spinach": [1],
-    "coffee_martini": [1],
-    "cut_roasted_beef": [1],
-    "flame_salmon_1": [1],
-    "flame_steak": [1],
-    "sear_steak": [1],
+    "cook_spinach": list(range(1, 201, 20)),
+    "coffee_martini": list(range(1, 201, 20)),
+    "cut_roasted_beef": list(range(1, 201, 20)),
+    "flame_salmon_1": list(range(1, 201, 20)),
+    "flame_steak": list(range(1, 201, 20)),
+    "sear_steak": list(range(1, 201, 20)),
 }
 
 BASELINES: dict[str, dict[str, Any]] = {

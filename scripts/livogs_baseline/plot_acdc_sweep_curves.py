@@ -258,6 +258,36 @@ def _is_close(a: float, b: float, eps: float = MATCH_EPS) -> bool:
     return abs(a - b) <= eps
 
 
+def _cross_2d(
+    o: tuple[float, float], a: tuple[float, float], b: tuple[float, float],
+) -> float:
+    """Cross product of vectors OA and OB."""
+    return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+
+
+def _compute_upper_convex_hull(
+    points: list[tuple[float, float]],
+) -> list[tuple[float, float]]:
+    """Upper convex hull of 2D points (x=compressed size, y=PSNR).
+
+    Returns the upper-left RD envelope sorted by x ascending, trimmed so that
+    quality is monotonically non-decreasing (dominated tail removed).
+    """
+    pts = sorted(set(points), key=lambda p: (p[0], -p[1]))
+    if len(pts) <= 1:
+        return list(pts)
+    upper: list[tuple[float, float]] = []
+    for p in pts:
+        while len(upper) >= 2 and _cross_2d(upper[-2], upper[-1], p) >= 0:
+            upper.pop()
+        upper.append(p)
+    # Trim dominated tail (lower quality at higher rate).
+    if len(upper) >= 2:
+        peak_idx = max(range(len(upper)), key=lambda i: upper[i][1])
+        upper = upper[: peak_idx + 1]
+    return upper
+
+
 def _match_anchor_row(anchor: AnchorPoint, rows: list[dict[str, Any]], frame_id: int) -> dict[str, Any]:
     exact = [
         r
@@ -564,6 +594,16 @@ def _make_plot(
     if not cart_rows:
         return []
 
+    _sweep_hull_pts: list[tuple[float, float]] = [
+        (float(r["compressed_mb"]), float(r["decomp_psnr"])) for r in cart_rows
+    ]
+    for idx in sorted(selected_seed_indices):
+        if 0 <= idx < len(seed_points):
+            _sweep_hull_pts.append(
+                (seed_points[idx].compressed_mb, seed_points[idx].decomp_psnr)
+            )
+    sweep_hull = _compute_upper_convex_hull(_sweep_hull_pts)
+
     zoom_seed_indices = _resolve_zoom_seed_indices(seed_points, selected_seed_indices)
     zoom_limits = _compute_zoom_limits(cart_rows, seed_points, zoom_seed_indices)
 
@@ -654,6 +694,33 @@ def _make_plot(
                 zorder=1,
             )
 
+        if len(sweep_hull) >= 2:
+            ax.plot(
+                [p[0] for p in sweep_hull],
+                [p[1] for p in sweep_hull],
+                color="#f59e0b",
+                linewidth=3.0,
+                linestyle="-",
+                marker="D",
+                markersize=6,
+                markeredgecolor="black",
+                markeredgewidth=0.8,
+                label=f"Sweep hull ({len(sweep_hull)} pts)",
+                zorder=4,
+            )
+        elif sweep_hull:
+            ax.scatter(
+                [sweep_hull[0][0]],
+                [sweep_hull[0][1]],
+                color="#f59e0b",
+                edgecolors="black",
+                linewidths=0.8,
+                marker="D",
+                s=64,
+                label="Sweep hull (1 pt)",
+                zorder=4,
+            )
+
         seed_label_added = False
         for idx in sorted(selected_seed_indices):
             seed = seed_points[idx]
@@ -722,6 +789,15 @@ def _make_plot(
         zoom_path = os.path.splitext(output_path)[0] + "_zoom.png"
         render_to_path(zoom_path, x_limits=zoom_limits[0], y_limits=zoom_limits[1])
         generated_paths.append(zoom_path)
+    if sweep_hull:
+        hull_csv_path = os.path.splitext(output_path)[0] + "_sweep_hull.csv"
+        os.makedirs(os.path.dirname(hull_csv_path), exist_ok=True)
+        with open(hull_csv_path, "w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow(["compressed_mb", "decomp_psnr"])
+            for pt in sweep_hull:
+                writer.writerow([pt[0], pt[1]])
+        generated_paths.append(hull_csv_path)
     return generated_paths
 
 
