@@ -77,8 +77,8 @@ if __name__ == "__main__":
                         help="Path to QUEEN model output dir (e.g. pretrained_output/.../queen_compressed_cook_spinach)")
     parser.add_argument("--output_folder", type=str, required=True,
                         help="Folder for benchmark CSV and metadata")
-    parser.add_argument("--output_ply_folder", type=str, required=True,
-                        help="Folder for decompressed PLY output")
+    parser.add_argument("--output_ply_folder", type=str, default=None,
+                        help="Folder for decompressed PLY output (optional)")
     parser.add_argument("--frame_start", type=int, default=1)
     parser.add_argument("--frame_end", type=int, default=300)
     parser.add_argument("--interval", type=int, default=1)
@@ -96,7 +96,8 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     os.makedirs(args.output_folder, exist_ok=True)
-    os.makedirs(args.output_ply_folder, exist_ok=True)
+    if args.output_ply_folder is not None:
+        os.makedirs(args.output_ply_folder, exist_ok=True)
 
     # Draco parameters
     qp = args.eg
@@ -115,7 +116,7 @@ if __name__ == "__main__":
     print("=" * 70)
     print(f"  PLY path:           {args.ply_path}")
     print(f"  Output folder:      {args.output_folder}")
-    print(f"  Output PLY folder:  {args.output_ply_folder}")
+    print(f"  Output PLY folder:  {args.output_ply_folder or '(skip)'}")
     print(f"  Frames:             {args.frame_start} to {args.frame_end} (interval={args.interval})")
     print(f"  Scene:              {args.scene_name}")
     print(f"  SH degree:          {args.sh_degree}")
@@ -160,15 +161,16 @@ if __name__ == "__main__":
         N_decoded = gs_decoded["positions"].shape[0]
 
         # --- 4. Save PLY (QUEEN-compatible with vertex_id) ---
-        frame_ply_dir = os.path.join(args.output_ply_folder, "frames", frame_str)
-        os.makedirs(frame_ply_dir, exist_ok=True)
-        ply_out_path = os.path.join(frame_ply_dir, "point_cloud.ply")
-        save_gs_ply(gs_decoded, ply_out_path)
+        if args.output_ply_folder is not None:
+            frame_ply_dir = os.path.join(args.output_ply_folder, "frames", frame_str)
+            os.makedirs(frame_ply_dir, exist_ok=True)
+            ply_out_path = os.path.join(frame_ply_dir, "point_cloud.ply")
+            save_gs_ply(gs_decoded, ply_out_path)
 
         benchmark_rows.append({
             "frame": frame_str,
-            "encode_time_ms": encode_time_ms,
-            "decode_time_ms": decode_time_ms,
+            "total_encode_ms": encode_time_ms,
+            "total_decode_ms": decode_time_ms,
             "original_points": N_original,
             "decoded_points": N_decoded,
             "uncompressed_size_bytes": uncompressed_size_bytes,
@@ -190,14 +192,14 @@ if __name__ == "__main__":
         csv_path = os.path.join(args.output_folder, "benchmark_dracogs.csv")
         with open(csv_path, "w", newline="") as f:
             w = csv.writer(f)
-            w.writerow(["frame_id", "encode_time_ms", "decode_time_ms",
+            w.writerow(["frame_id", "total_encode_ms", "total_decode_ms",
                          "original_points", "decoded_points",
                          "uncompressed_size_bytes", "compressed_size_bytes"])
             for r in benchmark_rows:
                 w.writerow([
                     r["frame"],
-                    f"{r['encode_time_ms']:.2f}",
-                    f"{r['decode_time_ms']:.2f}",
+                    f"{r['total_encode_ms']:.2f}",
+                    f"{r['total_decode_ms']:.2f}",
                     r["original_points"],
                     r["decoded_points"],
                     r["uncompressed_size_bytes"],
@@ -205,8 +207,8 @@ if __name__ == "__main__":
                 ])
 
         n = len(benchmark_rows)
-        total_enc_ms = sum(r["encode_time_ms"] for r in benchmark_rows)
-        total_dec_ms = sum(r["decode_time_ms"] for r in benchmark_rows)
+        total_enc_ms = sum(r["total_encode_ms"] for r in benchmark_rows)
+        total_dec_ms = sum(r["total_decode_ms"] for r in benchmark_rows)
         total_uncomp = sum(r["uncompressed_size_bytes"] for r in benchmark_rows)
         total_comp = sum(r["compressed_size_bytes"] for r in benchmark_rows)
 

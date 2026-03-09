@@ -16,7 +16,7 @@ END_FRAME=300
 INTERVAL=1
 SH_DEGREE=2
 
-J=18                    # Octree depth for voxelization
+J=17                    # Octree depth for voxelization
 QUANTIZE_STEP=0.0001    # Uniform quantization step
 SH_COLOR_SPACE="klt"    # Color space: rgb, yuv, klt
 RLGR_BLOCK_SIZE=4096    # RLGR parallel block size

@@ -28,7 +28,7 @@ SEQUENCE_NAME="flame_salmon_1"    #
 
 START_FRAME=1
 END_FRAME=300
-INTERVAL=1
+INTERVAL=10
 SH_DEGREE=2
 
 # LTS quantization parameters

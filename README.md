@@ -34,6 +34,9 @@ pip install --no-build-isolation ./submodules/simple-knn
 pip install --no-build-isolation ./submodules/diff-gaussian-rasterization
 pip install --no-build-isolation ./submodules/gaussian-rasterization-grad
 
+# Other optional dependencies
+pip install pynvml psutil
+
 # Apply timm package patch (required for compatibility)
 python scripts/patch_timm.py
 ```

@@ -45,7 +45,7 @@ data_path="/synology/rajrup/Queen"
 dataset_path="${data_path}/${DATASET_NAME}/${SEQUENCE_NAME}"
 gt_model_path="${data_path}/pretrained_output/${DATASET_NAME}/queen_compressed_${SEQUENCE_NAME}"
 
-output_folder="${gt_model_path}/compression/videogs/qp_${QP}"
+output_folder="${gt_model_path}/compression/videogs_rajrup/qp_${QP}"
 
 QUEEN_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 

@@ -22,6 +22,8 @@ _QUEEN_ROOT = os.path.dirname(os.path.dirname(_THIS_DIR))
 _LIVOGS_COMPRESSION = os.path.join(_QUEEN_ROOT, "LiVoGS", "compression")
 if _LIVOGS_COMPRESSION not in sys.path:
     sys.path.insert(0, _LIVOGS_COMPRESSION)
+if _QUEEN_ROOT not in sys.path:
+    sys.path.insert(0, _QUEEN_ROOT)
 
 from compress_decompress import encode_livogs, decode_livogs
 
