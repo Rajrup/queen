@@ -37,6 +37,31 @@ FIG_DPI = 150
 SWEEP_LABEL_PREFIX = "hullleft_gtloss02"
 
 PLOT_SEQUENCES: list[dict[str, str]] = [
+   {
+        "dataset_name": "Neural_3D_Video",
+        "sequence_name": "coffee_martini",
+        "qp_dir_name": "DyNeRF_coffee_martini",
+    },
+    {
+        "dataset_name": "Neural_3D_Video",
+        "sequence_name": "cook_spinach",
+        "qp_dir_name": "DyNeRF_cook_spinach",
+    },
+    {
+        "dataset_name": "Neural_3D_Video",
+        "sequence_name": "cut_roasted_beef",
+        "qp_dir_name": "DyNeRF_cut_roasted_beef",
+    },
+    {
+        "dataset_name": "Neural_3D_Video",
+        "sequence_name": "flame_salmon_1",
+        "qp_dir_name": "DyNeRF_flame_salmon_1",
+    },
+    {
+        "dataset_name": "Neural_3D_Video",
+        "sequence_name": "flame_steak",
+        "qp_dir_name": "DyNeRF_flame_steak",
+    },
     {
         "dataset_name": "Neural_3D_Video",
         "sequence_name": "sear_steak",
@@ -56,7 +81,7 @@ SEED_LEFT_INCLUSIVE = True
 MAX_SEED_POINTS: int | None = None
 MATCH_EPS = 1e-9
 NEAR_LOSSLESS_DROP_DB = 0.2
-FORCE_RECOLLECT_SUMMARY = True
+FORCE_RECOLLECT_SUMMARY = False
 
 LABEL_PATTERN = re.compile(
     rf"^{re.escape(SWEEP_LABEL_PREFIX)}_cart_dc_([0-9emp]+)_ac_([0-9emp]+)_d(\d+)_seed(\d+)$"
@@ -594,15 +619,18 @@ def _make_plot(
     if not cart_rows:
         return []
 
-    _sweep_hull_pts: list[tuple[float, float]] = [
-        (float(r["compressed_mb"]), float(r["decomp_psnr"])) for r in cart_rows
+    combined_hull_pts: list[tuple[float, float]] = [
+        (float(p.compressed_mb), float(p.decomp_psnr)) for p in hull_points
     ]
+    combined_hull_pts.extend(
+        (float(r["compressed_mb"]), float(r["decomp_psnr"])) for r in cart_rows
+    )
     for idx in sorted(selected_seed_indices):
         if 0 <= idx < len(seed_points):
-            _sweep_hull_pts.append(
+            combined_hull_pts.append(
                 (seed_points[idx].compressed_mb, seed_points[idx].decomp_psnr)
             )
-    sweep_hull = _compute_upper_convex_hull(_sweep_hull_pts)
+    sweep_hull = _compute_upper_convex_hull(combined_hull_pts)
 
     zoom_seed_indices = _resolve_zoom_seed_indices(seed_points, selected_seed_indices)
     zoom_limits = _compute_zoom_limits(cart_rows, seed_points, zoom_seed_indices)
@@ -705,7 +733,7 @@ def _make_plot(
                 markersize=6,
                 markeredgecolor="black",
                 markeredgewidth=0.8,
-                label=f"Sweep hull ({len(sweep_hull)} pts)",
+                label=f"Updated hull ({len(sweep_hull)} pts)",
                 zorder=4,
             )
         elif sweep_hull:
@@ -717,7 +745,7 @@ def _make_plot(
                 linewidths=0.8,
                 marker="D",
                 s=64,
-                label="Sweep hull (1 pt)",
+                label="Updated hull (1 pt)",
                 zorder=4,
             )
 

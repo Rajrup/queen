@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # pyright: reportMissingImports=false
-"""Collect baseline outputs and generate per-frame comparison plots for QUEEN."""
+"""Collect baseline outputs and generate sequence-level comparison plots for QUEEN."""
 
 from __future__ import annotations
 
@@ -55,39 +55,18 @@ BASELINE_STYLES: dict[str, dict[str, Any]] = {
     "VideoGS": {"color": "#d62728", "marker": "^", "label": "VideoGS"},
 }
 
-LIVOGS_HULL_ENABLED = True
-LIVOGS_RD_SUBDIR = "livogs_rd_nvcomp"
-LIVOGS_HULL_STYLE = {
-    "color": "#ff7f0e",
-    "linewidth": 1.8,
-    "linestyle": "-",
-    "marker": "D",
-    "markersize": 4,
-}
-
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 OUTPUT_DIR = os.path.join(SCRIPT_DIR, "baseline_comparison_res")
 
-
-CSV_COLUMNS = [
+LARGE_CSV_COLUMNS = [
     "sequence_name",
     "baseline",
-    "baseline_family",
-    "videogs_qp",
     "frame_id",
-    "gop_anchor_frame",
-    "compressed_size_bytes",
-    "compressed_mb",
-    "uncompressed_size_bytes",
-    "uncompressed_mb",
-    "encode_ms",
-    "decode_ms",
     "gt_psnr",
     "gt_ssim",
     "decomp_psnr",
     "decomp_ssim",
-    "psnr_drop",
-    "ssim_drop",
+    "size",
 ]
 
 
@@ -96,22 +75,6 @@ def _group_by(rows: list[dict[str, Any]], key: str) -> dict[str, list[dict[str, 
     for row in rows:
         groups.setdefault(str(row[key]), []).append(row)
     return groups
-
-
-def _iter_frame_groups(rows: list[dict[str, Any]]) -> list[tuple[str, int, list[dict[str, Any]]]]:
-    by_seq = _group_by(rows, "sequence_name")
-    grouped: list[tuple[str, int, list[dict[str, Any]]]] = []
-    for seq_name, seq_rows in sorted(by_seq.items()):
-        anchor_ids = sorted({int(r.get("gop_anchor_frame", r["frame_id"])) for r in seq_rows})
-        for anchor_id in anchor_ids:
-            anchor_rows = [
-                r
-                for r in seq_rows
-                if int(r.get("gop_anchor_frame", r["frame_id"])) == anchor_id
-            ]
-            if anchor_rows:
-                grouped.append((seq_name, anchor_id, anchor_rows))
-    return grouped
 
 
 def _first_float(row: dict[str, str], keys: tuple[str, ...]) -> Optional[float]:
@@ -162,7 +125,6 @@ def _sequence_max_frame(sequence: str) -> int:
         raise FileNotFoundError(
             f"No frame folders with point_cloud data found under {frames_root}"
         )
-
     return frame_ids[-1]
 
 
@@ -235,47 +197,6 @@ def _resolve_output_folder(
     )[0]
 
 
-def _resolve_livogs_hull_csv(sequence: str, frame_id: int) -> Optional[str]:
-    plot_dir = os.path.join(_model_root(sequence), "compression", LIVOGS_RD_SUBDIR, "plots")
-    exact_name = f"convex_hull_{DATASET_NAME}_{sequence}_frame{frame_id}.csv"
-    exact_path = os.path.join(plot_dir, exact_name)
-    if os.path.isfile(exact_path):
-        return exact_path
-
-    if not os.path.isdir(plot_dir):
-        return None
-
-    suffix = f"_frame{frame_id}.csv"
-    prefix = f"convex_hull_{DATASET_NAME}_"
-    candidates = [
-        os.path.join(plot_dir, name)
-        for name in os.listdir(plot_dir)
-        if name.startswith(prefix) and name.endswith(suffix)
-    ]
-    if not candidates:
-        return None
-
-    candidates.sort()
-    return candidates[0]
-
-
-def _load_livogs_hull_points(sequence: str, frame_id: int) -> list[tuple[float, float]]:
-    hull_csv = _resolve_livogs_hull_csv(sequence, frame_id)
-    if hull_csv is None:
-        return []
-
-    points: list[tuple[float, float]] = []
-    try:
-        with open(hull_csv, newline="", encoding="utf-8") as f:
-            for row in csv.DictReader(f):
-                points.append((float(row["compressed_mb"]), float(row["decomp_psnr"])))
-    except (OSError, KeyError, ValueError):
-        return []
-
-    points.sort(key=lambda p: p[0])
-    return points
-
-
 def _load_sequence_results(
     output_folder: str,
     sequence: str,
@@ -325,7 +246,26 @@ def _load_sequence_results(
     else:
         print(f"  [WARN] Evaluation JSON not found: {eval_json_path}")
 
-    for fid in frame_ids:
+    available_frame_ids = sorted(set(benchmark_by_frame.keys()) & set(metrics_by_frame.keys()))
+    selected_frame_ids = list(frame_ids)
+    unavailable_frame_ids = sorted(set(selected_frame_ids) - set(available_frame_ids))
+    if unavailable_frame_ids:
+        print(
+            f"  [INFO] {baseline} | {sequence}: unavailable requested frames "
+            f"{unavailable_frame_ids}; available frames {available_frame_ids}"
+        )
+    if (
+        selected_frame_ids
+        and available_frame_ids
+        and not any(fid in available_frame_ids for fid in selected_frame_ids)
+    ):
+        print(
+            f"  [INFO] {baseline} | {sequence}: requested frames {selected_frame_ids} "
+            f"not present in both benchmark/eval; using available frames {available_frame_ids}"
+        )
+        selected_frame_ids = available_frame_ids
+
+    for fid in selected_frame_ids:
         if fid not in benchmark_by_frame:
             print(f"  [SKIP] {baseline} | {sequence} | frame {fid} (no benchmark data)")
             continue
@@ -391,11 +331,11 @@ def _style_for_baseline(rows_for_baseline: list[dict[str, Any]]) -> dict[str, An
     qp = sample.get("videogs_qp")
     if family == "VideoGS" and isinstance(qp, int):
         qp_palette = {
-            0: "#1b9e77",   # teal
-            4: "#d95f02",   # orange
-            10: "#7570b3",  # purple
-            15: "#e7298a",  # magenta
-            20: "#66a61e",  # green
+            0: "#1b9e77",
+            4: "#d95f02",
+            10: "#7570b3",
+            15: "#e7298a",
+            20: "#66a61e",
         }
         qp_markers = {
             0: "o",
@@ -482,246 +422,238 @@ def collect_all_results() -> list[dict[str, Any]]:
     return rows
 
 
-def write_csv(rows: list[dict[str, Any]], path: str) -> None:
+def write_large_csv(rows: list[dict[str, Any]], path: str) -> None:
     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
     with open(path, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=CSV_COLUMNS)
+        writer = csv.DictWriter(f, fieldnames=LARGE_CSV_COLUMNS)
         writer.writeheader()
         for row in rows:
-            writer.writerow({col: row.get(col, "") for col in CSV_COLUMNS})
+            writer.writerow(
+                {
+                    "sequence_name": row.get("sequence_name", ""),
+                    "baseline": row.get("baseline", ""),
+                    "frame_id": row.get("frame_id", ""),
+                    "gt_psnr": row.get("gt_psnr", ""),
+                    "gt_ssim": row.get("gt_ssim", ""),
+                    "decomp_psnr": row.get("decomp_psnr", ""),
+                    "decomp_ssim": row.get("decomp_ssim", ""),
+                    "size": row.get("compressed_size_bytes", ""),
+                }
+            )
     print(f"  Wrote {len(rows)} rows to: {path}")
 
 
-def plot_psnr_size_per_frame(rows: list[dict[str, Any]], plot_dir: str) -> None:
-    for seq_name, frame_id, frame_rows in _iter_frame_groups(rows):
-        fig, ax = plt.subplots(figsize=(9, 6))
-        by_baseline = _group_by(frame_rows, "baseline")
-        sorted_baselines = sorted(by_baseline.items(), key=lambda item: _baseline_sort_key(item[1]))
-
-        x_values = [float(r["compressed_mb"]) for r in frame_rows if r.get("compressed_mb") is not None]
-        if x_values:
-            x_min = min(x_values)
-            x_max = max(x_values)
-            x_range = x_max - x_min
-            box_width = max(0.02, x_range * 0.025) if x_range > 0 else max(0.02, x_max * 0.025)
-        else:
-            box_width = 0.02
-
-        for _, bl_rows in sorted_baselines:
-            style = _style_for_baseline(bl_rows)
-            family = str(bl_rows[0].get("baseline_family", "")) if bl_rows else ""
-            if family == "VideoGS":
-                psnr_values = [float(r["decomp_psnr"]) for r in bl_rows if r.get("decomp_psnr") is not None]
-                size_values = [float(r["compressed_mb"]) for r in bl_rows if r.get("compressed_mb") is not None]
-                if not psnr_values or not size_values:
-                    continue
-                avg_size = float(np.mean(size_values))
-                median_psnr = float(np.median(psnr_values))
-                ax.boxplot(
-                    [psnr_values],
-                    positions=[avg_size],
-                    widths=[box_width],
-                    vert=True,
-                    patch_artist=True,
-                    manage_ticks=False,
-                    boxprops=dict(facecolor=style["color"], alpha=0.55, edgecolor=style["color"], linewidth=1.5),
-                    medianprops=dict(color="black", linewidth=2),
-                    whiskerprops=dict(color=style["color"], linewidth=1.3),
-                    capprops=dict(color=style["color"], linewidth=1.3),
-                    flierprops=dict(markerfacecolor=style["color"], markeredgecolor=style["color"], marker="o", markersize=4),
-                    zorder=4,
-                )
-                ax.scatter(
-                    [],
-                    [],
-                    color=style["color"],
-                    marker=style["marker"],
-                    s=80,
-                    label=f"{style['label']} (med {median_psnr:.2f} dB, {avg_size:.2f} MB)",
-                )
-            else:
-                xs = [r["compressed_mb"] for r in bl_rows if r.get("compressed_mb") is not None]
-                ys = [r["decomp_psnr"] for r in bl_rows if r.get("decomp_psnr") is not None]
-                if not xs or not ys:
-                    continue
-                x = float(np.mean(xs))
-                y = float(np.mean(ys))
-                ax.scatter(
-                    [x],
-                    [y],
-                    color=style["color"],
-                    marker=style["marker"],
-                    s=120,
-                    alpha=1.0,
-                    zorder=4,
-                    edgecolors="black",
-                    linewidths=0.8,
-                    label=f"{style['label']} ({y:.2f} dB, {x:.2f} MB)",
-                )
-
-        if LIVOGS_HULL_ENABLED:
-            hull_points = _load_livogs_hull_points(seq_name, frame_id)
-            if hull_points:
-                print(f"  LiVoGS hull: {seq_name} frame {frame_id} ({len(hull_points)} points)")
-                hx = [p[0] for p in hull_points]
-                hy = [p[1] for p in hull_points]
-                ax.plot(
-                    hx,
-                    hy,
-                    color=LIVOGS_HULL_STYLE["color"],
-                    linewidth=LIVOGS_HULL_STYLE["linewidth"],
-                    linestyle=LIVOGS_HULL_STYLE["linestyle"],
-                    marker=LIVOGS_HULL_STYLE["marker"],
-                    markersize=LIVOGS_HULL_STYLE["markersize"],
-                    alpha=0.95,
-                    zorder=3,
-                    label="LiVoGS hull",
-                )
-
-        anchor_gt_candidates = [
-            float(r["gt_psnr"])
-            for r in frame_rows
-            if r.get("gt_psnr") is not None and int(r.get("frame_id", -1)) == int(frame_id)
-        ]
-        if anchor_gt_candidates:
-            gt_anchor = anchor_gt_candidates[0]
-            ax.axhline(
-                gt_anchor,
-                color="black",
-                linestyle="--",
-                linewidth=1.4,
-                label=f"GT anchor frame ({gt_anchor:.2f} dB)",
-                zorder=1,
-            )
-
-        ax.set_xlabel("Compressed Size (MB)", fontsize=11)
-        ax.set_ylabel("PSNR (dB)", fontsize=11)
-        ax.set_title(f"PSNR-Size | {seq_name} | Anchor {frame_id}", fontsize=13)
-        ax.grid(True, alpha=0.3)
-        ax.legend(fontsize=9, loc="lower right")
-        fig.tight_layout()
-
-        out_path = os.path.join(plot_dir, f"psnr_size_{seq_name}_anchor{frame_id}.png")
-        fig.savefig(out_path, dpi=150)
-        plt.close(fig)
-        print(f"  Saved: {out_path}")
-
-
-def plot_latency_method_per_frame(rows: list[dict[str, Any]], plot_dir: str) -> None:
-    for seq_name, frame_id, frame_rows in _iter_frame_groups(rows):
-        by_baseline = _group_by(frame_rows, "baseline")
-        baselines_present = sorted(by_baseline.keys(), key=lambda b: _baseline_sort_key(by_baseline[b]))
-        if not baselines_present:
+def _values_by_frame(
+    seq_rows: list[dict[str, Any]],
+    key: str,
+    allowed_frame_ids: Optional[set[int]] = None,
+    reducer: str = "mean",
+) -> list[float]:
+    by_frame: dict[int, list[float]] = {}
+    for r in seq_rows:
+        fid = int(r["frame_id"])
+        if allowed_frame_ids is not None and fid not in allowed_frame_ids:
             continue
-
-        labels = [_style_for_baseline(by_baseline[b])["label"] for b in baselines_present]
-        encode_vals: list[float] = []
-        decode_vals: list[float] = []
-        for bl in baselines_present:
-            bl_rows = by_baseline[bl]
-            enc = [float(r["encode_ms"]) for r in bl_rows if r.get("encode_ms") is not None]
-            dec = [float(r["decode_ms"]) for r in bl_rows if r.get("decode_ms") is not None]
-            encode_vals.append(float(np.mean(enc)) if enc else np.nan)
-            decode_vals.append(float(np.mean(dec)) if dec else np.nan)
-
-        x = np.arange(len(baselines_present))
-        width = 0.34
-        fig, ax = plt.subplots(figsize=(9, 5.5))
-
-        enc_plot = [v if np.isfinite(v) else 0.0 for v in encode_vals]
-        dec_plot = [v if np.isfinite(v) else 0.0 for v in decode_vals]
-        bars_enc = ax.bar(x - width / 2, enc_plot, width, color="#4e79a7", label="Encode")
-        bars_dec = ax.bar(x + width / 2, dec_plot, width, color="#f28e2b", label="Decode")
-
-        for i, v in enumerate(encode_vals):
-            if np.isfinite(v):
-                ax.text(x[i] - width / 2, v, f"{v:.1f}", ha="center", va="bottom", fontsize=8)
-            else:
-                bars_enc[i].set_alpha(0.18)
-                ax.text(x[i] - width / 2, 0.0, "N/A", ha="center", va="bottom", fontsize=8)
-
-        for i, v in enumerate(decode_vals):
-            if np.isfinite(v):
-                ax.text(x[i] + width / 2, v, f"{v:.1f}", ha="center", va="bottom", fontsize=8)
-            else:
-                bars_dec[i].set_alpha(0.18)
-                ax.text(x[i] + width / 2, 0.0, "N/A", ha="center", va="bottom", fontsize=8)
-
-        finite_vals = [v for v in encode_vals + decode_vals if np.isfinite(v)]
-        ymax = max(finite_vals) * 1.18 if finite_vals else 1.0
-        ax.set_ylim(0.0, ymax)
-        ax.set_xticks(x)
-        ax.set_xticklabels(labels, fontsize=10)
-        ax.set_ylabel("Latency (ms/frame)", fontsize=11)
-        ax.set_title(f"Latency by Method | {seq_name} | Anchor {frame_id}", fontsize=13)
-        ax.grid(axis="y", alpha=0.3)
-        ax.legend(fontsize=9)
-        fig.tight_layout()
-
-        out_path = os.path.join(plot_dir, f"latency_method_{seq_name}_anchor{frame_id}.png")
-        fig.savefig(out_path, dpi=150, bbox_inches="tight")
-        plt.close(fig)
-        print(f"  Saved: {out_path}")
-
-
-def plot_size_method_per_frame(rows: list[dict[str, Any]], plot_dir: str) -> None:
-    for seq_name, frame_id, frame_rows in _iter_frame_groups(rows):
-        by_baseline = _group_by(frame_rows, "baseline")
-        baselines_present = sorted(by_baseline.keys(), key=lambda b: _baseline_sort_key(by_baseline[b]))
-        if not baselines_present:
+        v = r.get(key)
+        if v is None or v == 0:
             continue
+        by_frame.setdefault(fid, []).append(float(v))
+    if reducer == "max":
+        return [float(np.max(by_frame[fid])) for fid in sorted(by_frame.keys())]
+    return [float(np.mean(by_frame[fid])) for fid in sorted(by_frame.keys())]
 
-        labels = [_style_for_baseline(by_baseline[b])["label"] for b in baselines_present]
-        compressed_vals: list[float] = []
-        uncompressed_vals: list[float] = []
-        colors: list[str] = []
-        for bl in baselines_present:
-            bl_rows = by_baseline[bl]
-            comp = [float(r["compressed_mb"]) for r in bl_rows if r.get("compressed_mb") is not None]
-            uncomp = [float(r["uncompressed_mb"]) for r in bl_rows if r.get("uncompressed_mb") is not None]
-            compressed_vals.append(float(np.mean(comp)) if comp else np.nan)
-            uncompressed_vals.append(float(np.mean(uncomp)) if uncomp else np.nan)
-            colors.append(_style_for_baseline(bl_rows)["color"])
 
-        x = np.arange(len(baselines_present))
-        fig, ax = plt.subplots(figsize=(8.5, 5.5))
-        comp_plot = [v if np.isfinite(v) else 0.0 for v in compressed_vals]
-        bars = ax.bar(x, comp_plot, width=0.55, color=colors, edgecolor="black", linewidth=0.7)
+def _sequence_common_frame_ids(
+    seq_by_bl: dict[str, list[dict[str, Any]]], baseline_labels: list[str]
+) -> set[int]:
+    present_baselines = [
+        bl for bl in baseline_labels if seq_by_bl.get(bl)
+    ]
+    if not present_baselines:
+        return set()
 
-        for i, v in enumerate(compressed_vals):
-            if np.isfinite(v):
-                ax.text(x[i], v, f"{v:.2f}", ha="center", va="bottom", fontsize=8)
-            else:
-                bars[i].set_alpha(0.18)
-                ax.text(x[i], 0.0, "N/A", ha="center", va="bottom", fontsize=8)
+    frame_sets = [
+        {int(r["frame_id"]) for r in seq_by_bl[bl]}
+        for bl in present_baselines
+    ]
 
-        finite_comp = [v for v in compressed_vals if np.isfinite(v)]
-        ymax = max(finite_comp) * 1.18 if finite_comp else 1.0
-        ax.set_ylim(0.0, ymax)
-        ax.set_xticks(x)
-        ax.set_xticklabels(labels, fontsize=10)
-        ax.set_ylabel("Compressed Size (MB/frame)", fontsize=11)
-        ax.set_title(f"Size by Method | {seq_name} | Anchor {frame_id}", fontsize=13)
-        ax.grid(axis="y", alpha=0.3)
+    common = set.intersection(*frame_sets)
+    if common:
+        return common
 
-        legend_handles = []
-        legend_labels = []
-        for i, bl in enumerate(baselines_present):
-            bl_label = _style_for_baseline(by_baseline[bl])["label"]
-            legend_handles.append(bars[i])
-            if np.isfinite(uncompressed_vals[i]):
-                legend_labels.append(
-                    f"{bl_label} (Uncompressed: {uncompressed_vals[i]:.2f} MB)"
-                )
-            else:
-                legend_labels.append(f"{bl_label} (Uncompressed: N/A)")
-        ax.legend(legend_handles, legend_labels, fontsize=8, loc="upper left")
+    union: set[int] = set()
+    for frame_set in frame_sets:
+        union.update(frame_set)
+    return union
 
-        fig.tight_layout()
-        out_path = os.path.join(plot_dir, f"size_method_{seq_name}_anchor{frame_id}.png")
-        fig.savefig(out_path, dpi=150, bbox_inches="tight")
-        plt.close(fig)
-        print(f"  Saved: {out_path}")
+
+def _get_ordered_baselines(rows: list[dict[str, Any]]) -> list[str]:
+    by_bl = _group_by(rows, "baseline")
+    return sorted(by_bl.keys(), key=lambda b: _baseline_sort_key(by_bl[b]))
+
+
+def _bar_colors(
+    baseline_labels: list[str],
+    by_baseline: dict[str, list[dict[str, Any]]],
+) -> list[str]:
+    colors = ["#999999"]
+    for bl in baseline_labels:
+        style = _style_for_baseline(by_baseline[bl])
+        colors.append(style["color"])
+    return colors
+
+
+def plot_size_by_sequence(rows: list[dict[str, Any]], plot_dir: str) -> None:
+    sequences = list(dict.fromkeys(r["sequence_name"] for r in rows))
+    baseline_labels = _get_ordered_baselines(rows)
+    by_seq = _group_by(rows, "sequence_name")
+    by_baseline = _group_by(rows, "baseline")
+
+    bar_labels = ["Uncompressed"] + list(baseline_labels)
+    x_labels = sequences + ["Average"]
+    n_groups = len(x_labels)
+    n_bars = len(bar_labels)
+
+    means = np.zeros((n_bars, n_groups))
+    stds = np.zeros((n_bars, n_groups))
+    aggregate_values: list[list[float]] = [[] for _ in range(n_bars)]
+
+    for j, seq in enumerate(sequences):
+        seq_rows = by_seq.get(seq, [])
+        seq_by_bl = _group_by(seq_rows, "baseline")
+        common_frame_ids = _sequence_common_frame_ids(seq_by_bl, baseline_labels)
+
+        vals = _values_by_frame(seq_rows, "uncompressed_mb", common_frame_ids)
+        if vals:
+            means[0, j] = float(np.mean(vals))
+            stds[0, j] = float(np.std(vals))
+            aggregate_values[0].extend(vals)
+
+        for i, bl in enumerate(baseline_labels):
+            vals = _values_by_frame(seq_by_bl.get(bl, []), "compressed_mb", common_frame_ids)
+            if vals:
+                means[i + 1, j] = float(np.mean(vals))
+                stds[i + 1, j] = float(np.std(vals))
+                aggregate_values[i + 1].extend(vals)
+
+    for i, vals in enumerate(aggregate_values):
+        if vals:
+            means[i, -1] = float(np.mean(vals))
+            stds[i, -1] = float(np.std(vals))
+
+    colors = _bar_colors(baseline_labels, by_baseline)
+    fig, ax = plt.subplots(figsize=(max(14, n_groups * 2.2), 7))
+    x = np.arange(n_groups, dtype=float)
+    width = 0.8 / n_bars
+
+    for i in range(n_bars):
+        offset = (i - n_bars / 2 + 0.5) * width
+        ax.bar(
+            x + offset,
+            means[i],
+            width,
+            yerr=stds[i],
+            label=bar_labels[i],
+            color=colors[i],
+            edgecolor="black",
+            linewidth=0.5,
+            capsize=3,
+            zorder=3,
+        )
+
+    ax.set_yscale("log")
+    ax.set_xticks(x)
+    ax.set_xticklabels(x_labels, rotation=30, ha="right", fontsize=9)
+    ax.set_ylabel("Size (MB, log scale)", fontsize=11)
+    ax.set_title("Compressed Size by Sequence", fontsize=13)
+    ax.legend(fontsize=9)
+    ax.grid(axis="y", alpha=0.3, zorder=0)
+    fig.tight_layout()
+
+    out_path = os.path.join(plot_dir, "size_by_sequence.png")
+    fig.savefig(out_path, dpi=150)
+    plt.close(fig)
+    print(f"  Saved: {out_path}")
+
+
+def plot_quality_by_sequence(
+    rows: list[dict[str, Any]],
+    plot_dir: str,
+    decomp_key: str,
+    gt_key: str,
+    ylabel: str,
+    title: str,
+    filename: str,
+) -> None:
+    sequences = list(dict.fromkeys(r["sequence_name"] for r in rows))
+    baseline_labels = _get_ordered_baselines(rows)
+    by_seq = _group_by(rows, "sequence_name")
+    by_baseline = _group_by(rows, "baseline")
+
+    bar_labels = ["Uncompressed"] + list(baseline_labels)
+    x_labels = sequences + ["Average"]
+    n_groups = len(x_labels)
+    n_bars = len(bar_labels)
+
+    means = np.zeros((n_bars, n_groups))
+    stds = np.zeros((n_bars, n_groups))
+    aggregate_values: list[list[float]] = [[] for _ in range(n_bars)]
+
+    for j, seq in enumerate(sequences):
+        seq_rows = by_seq.get(seq, [])
+        seq_by_bl = _group_by(seq_rows, "baseline")
+        common_frame_ids = _sequence_common_frame_ids(seq_by_bl, baseline_labels)
+
+        vals = _values_by_frame(seq_rows, gt_key, common_frame_ids, reducer="max")
+        if vals:
+            means[0, j] = float(np.mean(vals))
+            stds[0, j] = float(np.std(vals))
+            aggregate_values[0].extend(vals)
+
+        for i, bl in enumerate(baseline_labels):
+            vals = _values_by_frame(seq_by_bl.get(bl, []), decomp_key, common_frame_ids)
+            if vals:
+                means[i + 1, j] = float(np.mean(vals))
+                stds[i + 1, j] = float(np.std(vals))
+                aggregate_values[i + 1].extend(vals)
+
+    for i, vals in enumerate(aggregate_values):
+        if vals:
+            means[i, -1] = float(np.mean(vals))
+            stds[i, -1] = float(np.std(vals))
+
+    colors = _bar_colors(baseline_labels, by_baseline)
+    fig, ax = plt.subplots(figsize=(max(14, n_groups * 2.2), 7))
+    x = np.arange(n_groups, dtype=float)
+    width = 0.8 / n_bars
+
+    for i in range(n_bars):
+        offset = (i - n_bars / 2 + 0.5) * width
+        ax.bar(
+            x + offset,
+            means[i],
+            width,
+            yerr=stds[i],
+            label=bar_labels[i],
+            color=colors[i],
+            edgecolor="black",
+            linewidth=0.5,
+            capsize=3,
+            zorder=3,
+        )
+
+    ax.set_xticks(x)
+    ax.set_xticklabels(x_labels, rotation=30, ha="right", fontsize=9)
+    ax.set_ylabel(ylabel, fontsize=11)
+    ax.set_title(title, fontsize=13)
+    ax.legend(fontsize=9)
+    ax.grid(axis="y", alpha=0.3, zorder=0)
+    fig.tight_layout()
+
+    out_path = os.path.join(plot_dir, filename)
+    fig.savefig(out_path, dpi=150)
+    plt.close(fig)
+    print(f"  Saved: {out_path}")
 
 
 def main() -> None:
@@ -753,8 +685,8 @@ def main() -> None:
                 f"avg PSNR={avg_psnr:.2f} dB, avg size={avg_size:.2f} MB"
             )
 
-    csv_path = os.path.join(OUTPUT_DIR, "baseline_results.csv")
-    write_csv(rows, csv_path)
+    large_csv_path = os.path.join(OUTPUT_DIR, "baseline_results.csv")
+    write_large_csv(rows, large_csv_path)
 
     print(f"\n{sep}\nStep 2: Generate plots\n{sep}")
     plot_dir = os.path.join(OUTPUT_DIR, "plots")
@@ -764,9 +696,25 @@ def main() -> None:
         if name.endswith(".png"):
             os.remove(os.path.join(plot_dir, name))
 
-    plot_psnr_size_per_frame(rows, plot_dir)
-    plot_latency_method_per_frame(rows, plot_dir)
-    plot_size_method_per_frame(rows, plot_dir)
+    plot_size_by_sequence(rows, plot_dir)
+    plot_quality_by_sequence(
+        rows,
+        plot_dir,
+        "decomp_psnr",
+        "gt_psnr",
+        "PSNR (dB)",
+        "PSNR by Sequence",
+        "psnr_by_sequence.png",
+    )
+    plot_quality_by_sequence(
+        rows,
+        plot_dir,
+        "decomp_ssim",
+        "gt_ssim",
+        "SSIM",
+        "SSIM by Sequence",
+        "ssim_by_sequence.png",
+    )
 
     print(f"\n{sep}")
     print(f"Done! All outputs in: {OUTPUT_DIR}")
