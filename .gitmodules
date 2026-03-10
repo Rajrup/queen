@@ -13,6 +13,7 @@
 [submodule "LiVoGS"]
 	path = LiVoGS
 	url = git@github.com:haodongw101/LiVoGS.git
+	branch = ptcl
 [submodule "VideoGS"]
 	path = VideoGS
 	url = https://github.com/Rajrup/VideoGS.git
