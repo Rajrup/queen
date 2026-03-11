@@ -17,6 +17,9 @@ import csv
 import json
 import time
 import argparse
+import re
+from pathlib import Path
+from typing import Any
 from tqdm import tqdm
 
 # --- sys.path setup: DracoGS build + compression dirs ---
@@ -42,6 +45,9 @@ DEFAULT_ET = 16
 DEFAULT_ES = 16
 DEFAULT_CL = 10
 
+_FRAME_SPAN_TAG_RE = re.compile(r"^frames_\d+_\d+_int_\d+$")
+_FRAME_DIR_TAG_RE = re.compile(r"^frame\d+$")
+
 # ---------------------------------------------------------------------------
 # PLY utilities
 # ---------------------------------------------------------------------------
@@ -49,6 +55,46 @@ DEFAULT_CL = 10
 def searchForMaxIteration(folder):
     saved_iters = [int(fname.split("_")[-1]) for fname in os.listdir(folder) if "iteration_" in fname]
     return max(saved_iters)
+
+
+def resolve_config_root(output_folder):
+    output_path = Path(output_folder)
+    if _FRAME_SPAN_TAG_RE.match(output_path.name) or _FRAME_DIR_TAG_RE.match(output_path.name):
+        return output_path.parent
+    return output_path
+
+
+def write_single_frame_benchmark_csv(csv_path: Path, benchmark_row: dict[str, Any]) -> None:
+    csv_path.parent.mkdir(parents=True, exist_ok=True)
+    with csv_path.open("w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow([
+            "frame_id",
+            "total_encode_ms",
+            "total_decode_ms",
+            "original_points",
+            "decoded_points",
+            "uncompressed_size_bytes",
+            "compressed_size_bytes",
+        ])
+        w.writerow([
+            int(benchmark_row["frame"]),
+            f"{float(benchmark_row['total_encode_ms']):.2f}",
+            f"{float(benchmark_row['total_decode_ms']):.2f}",
+            int(benchmark_row["original_points"]),
+            int(benchmark_row["decoded_points"]),
+            int(benchmark_row["uncompressed_size_bytes"]),
+            int(benchmark_row["compressed_size_bytes"]),
+        ])
+
+
+def write_single_frame_config_json(config_path: Path, config_template: dict[str, Any], frame_id: int) -> None:
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    out = dict(config_template)
+    out["frame_list"] = [int(frame_id)]
+    out["frame_id"] = int(frame_id)
+    with config_path.open("w") as f:
+        json.dump(out, f, indent=4)
 
 
 def find_queen_ply_path(frame_dir):
@@ -94,6 +140,7 @@ if __name__ == "__main__":
     parser.add_argument("--cl", type=int, default=DEFAULT_CL, help="Compression level (0-10)")
 
     args = parser.parse_args()
+    config_root = resolve_config_root(args.output_folder)
 
     os.makedirs(args.output_folder, exist_ok=True)
     if args.output_ply_folder is not None:
@@ -167,6 +214,12 @@ if __name__ == "__main__":
             ply_out_path = os.path.join(frame_ply_dir, "point_cloud.ply")
             save_gs_ply(gs_decoded, ply_out_path)
 
+            canonical_frame_ply_folder = config_root / f"frame{frame}" / "decompressed_ply" / str(frame) / "point_cloud"
+            canonical_frame_ply_folder.mkdir(parents=True, exist_ok=True)
+            canonical_ply_out_path = canonical_frame_ply_folder / "point_cloud.ply"
+            if str(canonical_ply_out_path) != ply_out_path:
+                save_gs_ply(gs_decoded, str(canonical_ply_out_path))
+
         benchmark_rows.append({
             "frame": frame_str,
             "total_encode_ms": encode_time_ms,
@@ -227,9 +280,16 @@ if __name__ == "__main__":
             "frame_start": args.frame_start,
             "frame_end": args.frame_end,
             "interval": args.interval,
+            "frame_list": [int(r["frame"]) for r in benchmark_rows],
         }
         with open(os.path.join(args.output_folder, "dracogs_config.json"), "w") as f:
             json.dump(config_out, f, indent=4)
+
+        for row in benchmark_rows:
+            frame_id = int(row["frame"])
+            frame_root = config_root / f"frame{frame_id}"
+            write_single_frame_benchmark_csv(frame_root / "benchmark_dracogs.csv", row)
+            write_single_frame_config_json(frame_root / "dracogs_config.json", config_out, frame_id)
 
         print("\n" + "=" * 70)
         print("Benchmark Summary (DracoGS compress + decompress)")
@@ -241,6 +301,9 @@ if __name__ == "__main__":
         print(f"  Total compressed size:     {total_comp / 1024 / 1024:.2f} MB  (avg {total_comp / n / 1024 / 1024:.2f} MB/frame)")
         print(f"  Compression ratio:         {total_uncomp / total_comp:.2f}x")
         print(f"  CSV: {csv_path}")
+        print(f"  Canonical frame root:      {config_root}")
+        if args.output_ply_folder is not None:
+            print(f"  Canonical PLY layout:      {config_root}/frame*/decompressed_ply")
         print("=" * 70)
     else:
         print("No frames were processed.")

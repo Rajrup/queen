@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Run DracoGS, MesonGS, and VideoGS baselines for QUEEN.
 
-Note: QUEEN baseline pipelines currently use range-based frame arguments
-(`--frame_start/--frame_end/--interval`). To support sparse selected frame
-lists, this runner executes the full continuous range that spans each list,
-then downstream collection filters to the selected frame IDs.
+DracoGS and MesonGS are executed per selected frame and stored under
+`.../<config>/frame{frame_id}` so evaluation and collection are frame-centric.
+VideoGS keeps its GOP/span-based storage (`frames_*`) because one run covers
+multiple frames per anchor.
 """
 
 from __future__ import annotations
@@ -204,6 +204,10 @@ def frame_span_tag(frame_start: int, frame_end: int, interval: int) -> str:
     return f"frames_{frame_start}_{frame_end}_int_{interval}"
 
 
+def frame_output_tag(frame_id: int) -> str:
+    return f"frame{int(frame_id)}"
+
+
 def get_output_folder(
     baseline: str,
     sequence: str,
@@ -214,15 +218,18 @@ def get_output_folder(
 ) -> str:
     model_root = Path(DATA_PATH) / "pretrained_output" / DATASET_NAME / f"queen_compressed_{sequence}"
     run_tag = frame_span_tag(frame_start, frame_end, interval)
+    frame_tag = frame_output_tag(frame_start)
 
     if baseline == "dracogs":
         tag = (
             f"eg_{DRACOGS_EG}_eo_{DRACOGS_EO}_"
             f"et_{DRACOGS_ET}_es_{DRACOGS_ES}_cl_{DRACOGS_CL}"
         )
-        return str(model_root / "compression" / "dracogs" / tag / run_tag)
+        leaf = frame_tag if (frame_start == frame_end and interval == 1) else run_tag
+        return str(model_root / "compression" / "dracogs" / tag / leaf)
     if baseline == "mesongs":
-        return str(model_root / "compression" / "mesongs" / "params_default" / run_tag)
+        leaf = frame_tag if (frame_start == frame_end and interval == 1) else run_tag
+        return str(model_root / "compression" / "mesongs" / "params_default" / leaf)
     if baseline == "videogs":
         if videogs_qp is None:
             raise ValueError("videogs_qp must be provided for videogs output folder")
@@ -288,95 +295,93 @@ def run_evaluation(
 
 
 def run_dracogs(sequence: str, selected_frames: list[int], dry_run: bool, skip_existing: bool) -> None:
-    frame_start, frame_end, interval = selected_to_span(selected_frames)
-    paths = get_paths(sequence, "dracogs", frame_start, frame_end, interval)
-    if skip_existing and _output_complete(paths.output_folder):
-        log_step(f"SKIP (exists) DracoGS | {sequence} | frames: {frame_start}-{frame_end}:{interval}")
-        return
-    log_step(
-        f"DracoGS | {sequence} | frames: {frame_start}-{frame_end}:{interval} | {timestamp()}"
-    )
+    for frame_id in sorted(set(int(v) for v in selected_frames)):
+        frame_start, frame_end, interval = frame_id, frame_id, 1
+        paths = get_paths(sequence, "dracogs", frame_start, frame_end, interval)
+        if skip_existing and _output_complete(paths.output_folder):
+            log_step(f"SKIP (exists) DracoGS | {sequence} | frame: {frame_id}")
+            continue
+        log_step(f"DracoGS | {sequence} | frame: {frame_id} | {timestamp()}")
 
-    cmd = conda_python_cmd(
-        BASELINE_ENVS["dracogs"],
-        QUEEN_ROOT / "scripts" / "dracogs_baseline" / "compress_decompress_pipeline.py",
-        [
-            "--ply_path",
-            paths.gt_model_path,
-            "--output_folder",
-            paths.output_folder,
-            "--output_ply_folder",
-            f"{paths.output_folder}/decompressed_ply",
-            "--frame_start",
-            str(frame_start),
-            "--frame_end",
-            str(frame_end),
-            "--interval",
-            str(interval),
-            "--sh_degree",
-            str(SH_DEGREE),
-            "--scene_name",
-            sequence,
-            "--eg",
-            str(DRACOGS_EG),
-            "--eo",
-            str(DRACOGS_EO),
-            "--et",
-            str(DRACOGS_ET),
-            "--es",
-            str(DRACOGS_ES),
-            "--cl",
-            str(DRACOGS_CL),
-        ],
-    )
-    try:
-        run_cmd(cmd, cwd=QUEEN_ROOT, dry_run=dry_run)
-        run_evaluation(paths, sequence, frame_start, frame_end, interval, dry_run)
-    except subprocess.CalledProcessError:
-        _cleanup_partial(paths.output_folder)
-        raise
+        cmd = conda_python_cmd(
+            BASELINE_ENVS["dracogs"],
+            QUEEN_ROOT / "scripts" / "dracogs_baseline" / "compress_decompress_pipeline.py",
+            [
+                "--ply_path",
+                paths.gt_model_path,
+                "--output_folder",
+                paths.output_folder,
+                "--output_ply_folder",
+                f"{paths.output_folder}/decompressed_ply",
+                "--frame_start",
+                str(frame_start),
+                "--frame_end",
+                str(frame_end),
+                "--interval",
+                str(interval),
+                "--sh_degree",
+                str(SH_DEGREE),
+                "--scene_name",
+                sequence,
+                "--eg",
+                str(DRACOGS_EG),
+                "--eo",
+                str(DRACOGS_EO),
+                "--et",
+                str(DRACOGS_ET),
+                "--es",
+                str(DRACOGS_ES),
+                "--cl",
+                str(DRACOGS_CL),
+            ],
+        )
+        try:
+            run_cmd(cmd, cwd=QUEEN_ROOT, dry_run=dry_run)
+            run_evaluation(paths, sequence, frame_start, frame_end, interval, dry_run)
+        except subprocess.CalledProcessError:
+            _cleanup_partial(paths.output_folder)
+            raise
 
 
 def run_mesongs(sequence: str, selected_frames: list[int], dry_run: bool, skip_existing: bool) -> None:
-    frame_start, frame_end, interval = selected_to_span(selected_frames)
-    paths = get_paths(sequence, "mesongs", frame_start, frame_end, interval)
-    if skip_existing and _output_complete(paths.output_folder):
-        log_step(f"SKIP (exists) MesonGS | {sequence} | frames: {frame_start}-{frame_end}:{interval}")
-        return
-    log_step(
-        f"MesonGS | {sequence} | frames: {frame_start}-{frame_end}:{interval} | {timestamp()}"
-    )
+    for frame_id in sorted(set(int(v) for v in selected_frames)):
+        frame_start, frame_end, interval = frame_id, frame_id, 1
+        paths = get_paths(sequence, "mesongs", frame_start, frame_end, interval)
+        if skip_existing and _output_complete(paths.output_folder):
+            log_step(f"SKIP (exists) MesonGS | {sequence} | frame: {frame_id}")
+            continue
+        log_step(f"MesonGS | {sequence} | frame: {frame_id} | {timestamp()}")
 
-    cmd = conda_python_cmd(
-        BASELINE_ENVS["mesongs"],
-        QUEEN_ROOT / "scripts" / "mesongs_baseline" / "compression_decompress_pipeline.py",
-        [
-            "--ply_path",
-            paths.gt_model_path,
-            "--dataset_path",
-            paths.dataset_path,
-            "--output_folder",
-            paths.output_folder,
-            "--output_ply_folder",
-            f"{paths.output_folder}/decompressed_ply",
-            "--frame_start",
-            str(frame_start),
-            "--frame_end",
-            str(frame_end),
-            "--interval",
-            str(interval),
-            "--sh_degree",
-            str(SH_DEGREE),
-            "--scene_name",
-            sequence,
-        ],
-    )
-    try:
-        run_cmd(cmd, cwd=MESONGS_ROOT, dry_run=dry_run)
-        run_evaluation(paths, sequence, frame_start, frame_end, interval, dry_run)
-    except subprocess.CalledProcessError:
-        _cleanup_partial(paths.output_folder)
-        raise
+        cmd = conda_python_cmd(
+            BASELINE_ENVS["mesongs"],
+            QUEEN_ROOT / "scripts" / "mesongs_baseline" / "compression_decompress_pipeline.py",
+            [
+                "--ply_path",
+                paths.gt_model_path,
+                "--dataset_path",
+                paths.dataset_path,
+                "--output_folder",
+                paths.output_folder,
+                "--output_ply_folder",
+                f"{paths.output_folder}/decompressed_ply",
+                "--frame_start",
+                str(frame_start),
+                "--frame_end",
+                str(frame_end),
+                "--interval",
+                str(interval),
+                "--sh_degree",
+                str(SH_DEGREE),
+                "--scene_name",
+                sequence,
+            ],
+        )
+        try:
+            run_cmd(cmd, cwd=MESONGS_ROOT, dry_run=dry_run)
+            run_evaluation(paths, sequence, frame_start, frame_end, interval, dry_run)
+        except subprocess.CalledProcessError:
+            _cleanup_partial(paths.output_folder)
+            raise
 
 
 def run_videogs(sequence: str, selected_frames: list[int], dry_run: bool, skip_existing: bool) -> None:
@@ -456,8 +461,10 @@ def get_expected_output_folders(
             )
         return output_folders
 
-    frame_start, frame_end, interval = selected_to_span(selected_frames)
-    return [get_output_folder(baseline, sequence, frame_start, frame_end, interval)]
+    return [
+        get_output_folder(baseline, sequence, frame_id, frame_id, 1)
+        for frame_id in sorted(set(int(v) for v in selected_frames))
+    ]
 
 
 BASELINE_RUNNERS: dict[str, Callable[[str, list[int], bool, bool], None]] = {

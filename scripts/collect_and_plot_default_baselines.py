@@ -49,6 +49,11 @@ BASELINES: dict[str, dict[str, Any]] = {
     },
 }
 
+PLOT_YLIM: dict[str, tuple[float, float]] = {
+    "PSNR": (30, 40),
+    "SSIM": (0.9, 1.0),
+}
+
 BASELINE_STYLES: dict[str, dict[str, Any]] = {
     "DracoGS": {"color": "#1f77b4", "marker": "o", "label": "DracoGS"},
     "MesonGS": {"color": "#2ca02c", "marker": "s", "label": "MesonGS"},
@@ -150,6 +155,10 @@ def _frame_span_tag(frame_start: int, frame_end: int, interval: int) -> str:
     return f"frames_{frame_start}_{frame_end}_int_{interval}"
 
 
+def _frame_output_tag(frame_id: int) -> str:
+    return f"frame{int(frame_id)}"
+
+
 def _candidate_output_folders(
     sequence: str,
     subdir: str,
@@ -157,12 +166,54 @@ def _candidate_output_folders(
     frame_start: int,
     frame_end: int,
     interval: int,
+    frame_id: Optional[int] = None,
 ) -> list[str]:
     legacy_root = os.path.join(_model_root(sequence), "compression", subdir, output_tag)
-    return [
-        os.path.join(legacy_root, _frame_span_tag(frame_start, frame_end, interval)),
-        legacy_root,
-    ]
+    candidates: list[str] = []
+    if frame_id is not None:
+        candidates.extend(
+            [
+                os.path.join(legacy_root, _frame_output_tag(frame_id)),
+                os.path.join(legacy_root, "frame_results"),
+            ]
+        )
+    candidates.extend(
+        [
+            os.path.join(legacy_root, _frame_span_tag(frame_start, frame_end, interval)),
+            legacy_root,
+        ]
+    )
+    return candidates
+
+
+def _folder_has_frame_data(folder: str, benchmark_csv_name: str, frame_id: int) -> bool:
+    benchmark_path = os.path.join(folder, benchmark_csv_name)
+    eval_json_path = os.path.join(folder, "evaluation", "evaluation_results.json")
+
+    has_benchmark = False
+    if os.path.isfile(benchmark_path):
+        try:
+            with open(benchmark_path, newline="", encoding="utf-8") as f:
+                for row in csv.DictReader(f):
+                    if int(row.get("frame_id", -1)) == frame_id:
+                        has_benchmark = True
+                        break
+        except (OSError, ValueError):
+            pass
+
+    has_eval = False
+    if os.path.isfile(eval_json_path):
+        try:
+            with open(eval_json_path, encoding="utf-8") as f:
+                eval_data = json.load(f)
+            for fr in eval_data.get("per_frame", []):
+                if int(fr.get("frame", -1)) == frame_id:
+                    has_eval = True
+                    break
+        except (OSError, json.JSONDecodeError, ValueError):
+            pass
+
+    return has_benchmark or has_eval
 
 
 def _resolve_output_folder(
@@ -173,6 +224,7 @@ def _resolve_output_folder(
     frame_end: int,
     interval: int,
     benchmark_csv_name: str,
+    frame_id: Optional[int] = None,
 ) -> str:
     for folder in _candidate_output_folders(
         sequence,
@@ -181,11 +233,16 @@ def _resolve_output_folder(
         frame_start,
         frame_end,
         interval,
+        frame_id=frame_id,
     ):
-        benchmark_path = os.path.join(folder, benchmark_csv_name)
-        eval_json_path = os.path.join(folder, "evaluation", "evaluation_results.json")
-        if os.path.isfile(benchmark_path) or os.path.isfile(eval_json_path):
-            return folder
+        if frame_id is not None:
+            if _folder_has_frame_data(folder, benchmark_csv_name, frame_id):
+                return folder
+        else:
+            benchmark_path = os.path.join(folder, benchmark_csv_name)
+            eval_json_path = os.path.join(folder, "evaluation", "evaluation_results.json")
+            if os.path.isfile(benchmark_path) or os.path.isfile(eval_json_path):
+                return folder
 
     return _candidate_output_folders(
         sequence,
@@ -194,6 +251,7 @@ def _resolve_output_folder(
         frame_start,
         frame_end,
         interval,
+        frame_id=frame_id,
     )[0]
 
 
@@ -399,26 +457,28 @@ def collect_all_results() -> list[dict[str, Any]]:
                             )
                         )
                 else:
-                    output_folder = _resolve_output_folder(
-                        sequence,
-                        cfg["subdir"],
-                        str(output_tag),
-                        frame_start,
-                        frame_end,
-                        interval,
-                        cfg["benchmark_csv"],
-                    )
-                    rows.extend(
-                        _load_sequence_results(
-                            output_folder,
+                    for fid in frame_ids:
+                        output_folder = _resolve_output_folder(
                             sequence,
-                            baseline_label,
-                            baseline_family,
-                            videogs_qp,
+                            cfg["subdir"],
+                            str(output_tag),
+                            frame_start,
+                            frame_end,
+                            interval,
                             cfg["benchmark_csv"],
-                            frame_ids,
+                            frame_id=int(fid),
                         )
-                    )
+                        rows.extend(
+                            _load_sequence_results(
+                                output_folder,
+                                sequence,
+                                baseline_label,
+                                baseline_family,
+                                videogs_qp,
+                                cfg["benchmark_csv"],
+                                [int(fid)],
+                            )
+                        )
     return rows
 
 
@@ -443,51 +503,27 @@ def write_large_csv(rows: list[dict[str, Any]], path: str) -> None:
     print(f"  Wrote {len(rows)} rows to: {path}")
 
 
-def _values_by_frame(
-    seq_rows: list[dict[str, Any]],
-    key: str,
-    allowed_frame_ids: Optional[set[int]] = None,
-    reducer: str = "mean",
+def _dedup_by_frame(
+    seq_rows: list[dict[str, Any]], key: str,
 ) -> list[float]:
-    by_frame: dict[int, list[float]] = {}
+    """Extract one value per unique frame_id, skipping None and zero."""
+    seen: set[int] = set()
+    vals: list[float] = []
     for r in seq_rows:
         fid = int(r["frame_id"])
-        if allowed_frame_ids is not None and fid not in allowed_frame_ids:
+        if fid in seen:
             continue
         v = r.get(key)
         if v is None or v == 0:
             continue
-        by_frame.setdefault(fid, []).append(float(v))
-    if reducer == "max":
-        return [float(np.max(by_frame[fid])) for fid in sorted(by_frame.keys())]
-    return [float(np.mean(by_frame[fid])) for fid in sorted(by_frame.keys())]
+        seen.add(fid)
+        vals.append(float(v))
+    return vals
 
 
-def _sequence_common_frame_ids(
-    seq_by_bl: dict[str, list[dict[str, Any]]], baseline_labels: list[str]
-) -> set[int]:
-    present_baselines = [
-        bl for bl in baseline_labels if seq_by_bl.get(bl)
-    ]
-    if not present_baselines:
-        return set()
-
-    frame_sets = [
-        {int(r["frame_id"]) for r in seq_by_bl[bl]}
-        for bl in present_baselines
-    ]
-
-    common = set.intersection(*frame_sets)
-    if common:
-        return common
-
-    union: set[int] = set()
-    for frame_set in frame_sets:
-        union.update(frame_set)
-    return union
-
-
-def _get_ordered_baselines(rows: list[dict[str, Any]]) -> list[str]:
+def _get_ordered_baselines(
+    rows: list[dict[str, Any]],
+) -> list[str]:
     by_bl = _group_by(rows, "baseline")
     return sorted(by_bl.keys(), key=lambda b: _baseline_sort_key(by_bl[b]))
 
@@ -516,30 +552,37 @@ def plot_size_by_sequence(rows: list[dict[str, Any]], plot_dir: str) -> None:
 
     means = np.zeros((n_bars, n_groups))
     stds = np.zeros((n_bars, n_groups))
-    aggregate_values: list[list[float]] = [[] for _ in range(n_bars)]
 
     for j, seq in enumerate(sequences):
         seq_rows = by_seq.get(seq, [])
-        seq_by_bl = _group_by(seq_rows, "baseline")
-        common_frame_ids = _sequence_common_frame_ids(seq_by_bl, baseline_labels)
-
-        vals = _values_by_frame(seq_rows, "uncompressed_mb", common_frame_ids)
+        vals = _dedup_by_frame(seq_rows, "uncompressed_mb")
         if vals:
             means[0, j] = float(np.mean(vals))
             stds[0, j] = float(np.std(vals))
-            aggregate_values[0].extend(vals)
-
+        seq_by_bl = _group_by(seq_rows, "baseline")
         for i, bl in enumerate(baseline_labels):
-            vals = _values_by_frame(seq_by_bl.get(bl, []), "compressed_mb", common_frame_ids)
+            vals = [
+                float(r["compressed_mb"])
+                for r in seq_by_bl.get(bl, [])
+                if r.get("compressed_mb") is not None
+            ]
             if vals:
                 means[i + 1, j] = float(np.mean(vals))
                 stds[i + 1, j] = float(np.std(vals))
-                aggregate_values[i + 1].extend(vals)
 
-    for i, vals in enumerate(aggregate_values):
+    vals = _dedup_by_frame(rows, "uncompressed_mb")
+    if vals:
+        means[0, -1] = float(np.mean(vals))
+        stds[0, -1] = float(np.std(vals))
+    for i, bl in enumerate(baseline_labels):
+        vals = [
+            float(r["compressed_mb"])
+            for r in by_baseline.get(bl, [])
+            if r.get("compressed_mb") is not None
+        ]
         if vals:
-            means[i, -1] = float(np.mean(vals))
-            stds[i, -1] = float(np.std(vals))
+            means[i + 1, -1] = float(np.mean(vals))
+            stds[i + 1, -1] = float(np.std(vals))
 
     colors = _bar_colors(baseline_labels, by_baseline)
     fig, ax = plt.subplots(figsize=(max(14, n_groups * 2.2), 7))
@@ -584,6 +627,7 @@ def plot_quality_by_sequence(
     ylabel: str,
     title: str,
     filename: str,
+    ylim: Optional[tuple[float, float]] = None,
 ) -> None:
     sequences = list(dict.fromkeys(r["sequence_name"] for r in rows))
     baseline_labels = _get_ordered_baselines(rows)
@@ -597,30 +641,37 @@ def plot_quality_by_sequence(
 
     means = np.zeros((n_bars, n_groups))
     stds = np.zeros((n_bars, n_groups))
-    aggregate_values: list[list[float]] = [[] for _ in range(n_bars)]
 
     for j, seq in enumerate(sequences):
         seq_rows = by_seq.get(seq, [])
-        seq_by_bl = _group_by(seq_rows, "baseline")
-        common_frame_ids = _sequence_common_frame_ids(seq_by_bl, baseline_labels)
-
-        vals = _values_by_frame(seq_rows, gt_key, common_frame_ids, reducer="max")
+        vals = _dedup_by_frame(seq_rows, gt_key)
         if vals:
             means[0, j] = float(np.mean(vals))
             stds[0, j] = float(np.std(vals))
-            aggregate_values[0].extend(vals)
-
+        seq_by_bl = _group_by(seq_rows, "baseline")
         for i, bl in enumerate(baseline_labels):
-            vals = _values_by_frame(seq_by_bl.get(bl, []), decomp_key, common_frame_ids)
+            vals = [
+                float(r[decomp_key])
+                for r in seq_by_bl.get(bl, [])
+                if r.get(decomp_key) is not None
+            ]
             if vals:
                 means[i + 1, j] = float(np.mean(vals))
                 stds[i + 1, j] = float(np.std(vals))
-                aggregate_values[i + 1].extend(vals)
 
-    for i, vals in enumerate(aggregate_values):
+    vals = _dedup_by_frame(rows, gt_key)
+    if vals:
+        means[0, -1] = float(np.mean(vals))
+        stds[0, -1] = float(np.std(vals))
+    for i, bl in enumerate(baseline_labels):
+        vals = [
+            float(r[decomp_key])
+            for r in by_baseline.get(bl, [])
+            if r.get(decomp_key) is not None
+        ]
         if vals:
-            means[i, -1] = float(np.mean(vals))
-            stds[i, -1] = float(np.std(vals))
+            means[i + 1, -1] = float(np.mean(vals))
+            stds[i + 1, -1] = float(np.std(vals))
 
     colors = _bar_colors(baseline_labels, by_baseline)
     fig, ax = plt.subplots(figsize=(max(14, n_groups * 2.2), 7))
@@ -644,6 +695,8 @@ def plot_quality_by_sequence(
 
     ax.set_xticks(x)
     ax.set_xticklabels(x_labels, rotation=30, ha="right", fontsize=9)
+    if ylim is not None:
+        ax.set_ylim(ylim)
     ax.set_ylabel(ylabel, fontsize=11)
     ax.set_title(title, fontsize=13)
     ax.legend(fontsize=9)
@@ -705,6 +758,7 @@ def main() -> None:
         "PSNR (dB)",
         "PSNR by Sequence",
         "psnr_by_sequence.png",
+        ylim=PLOT_YLIM.get("PSNR"),
     )
     plot_quality_by_sequence(
         rows,
@@ -714,6 +768,7 @@ def main() -> None:
         "SSIM",
         "SSIM by Sequence",
         "ssim_by_sequence.png",
+        ylim=PLOT_YLIM.get("SSIM"),
     )
 
     print(f"\n{sep}")
