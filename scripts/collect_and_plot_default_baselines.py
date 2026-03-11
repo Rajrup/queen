@@ -9,11 +9,18 @@ import json
 import os
 import sys
 from functools import lru_cache
-from typing import Any, Optional
+from typing import Any
 
-import matplotlib  # type: ignore[reportMissingImports]
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt  # type: ignore[reportMissingImports]
+try:
+    import matplotlib  # type: ignore[reportMissingImports]
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt  # type: ignore[reportMissingImports]
+except ImportError as exc:
+    raise SystemExit(
+        "matplotlib is required for plotting. Install it in your environment "
+        "(for example: pip install matplotlib)."
+    ) from exc
 import numpy as np
 
 
@@ -82,18 +89,6 @@ def _group_by(rows: list[dict[str, Any]], key: str) -> dict[str, list[dict[str, 
     return groups
 
 
-def _first_float(row: dict[str, str], keys: tuple[str, ...]) -> Optional[float]:
-    for key in keys:
-        raw = row.get(key)
-        if raw in (None, ""):
-            continue
-        try:
-            return float(raw)
-        except ValueError:
-            continue
-    return None
-
-
 def _model_root(sequence: str) -> str:
     return os.path.join(
         DATA_PATH,
@@ -137,16 +132,14 @@ def _videogs_gop_frame_ids(sequence: str, anchor: int) -> list[int]:
     max_frame = _sequence_max_frame(sequence)
     if anchor > max_frame:
         raise ValueError(
-            f"VideoGS anchor frame {anchor} exceeds last available frame {max_frame} "
-            f"for sequence {sequence}"
+            f"VideoGS anchor frame {anchor} exceeds last available frame {max_frame} for sequence {sequence}"
         )
 
     gop_end = min(int(anchor) + VIDEOGS_GROUP_SIZE - 1, max_frame)
     frame_ids = list(range(int(anchor), gop_end + 1))
     if not frame_ids:
         raise ValueError(
-            f"Resolved empty VideoGS GOP for sequence {sequence}: "
-            f"anchor={anchor}, end={gop_end}"
+            f"Resolved empty VideoGS GOP for sequence {sequence}: anchor={anchor}, end={gop_end}"
         )
     return frame_ids
 
@@ -166,7 +159,7 @@ def _candidate_output_folders(
     frame_start: int,
     frame_end: int,
     interval: int,
-    frame_id: Optional[int] = None,
+    frame_id: int | None = None,
 ) -> list[str]:
     legacy_root = os.path.join(_model_root(sequence), "compression", subdir, output_tag)
     candidates: list[str] = []
@@ -224,9 +217,9 @@ def _resolve_output_folder(
     frame_end: int,
     interval: int,
     benchmark_csv_name: str,
-    frame_id: Optional[int] = None,
+    frame_id: int | None = None,
 ) -> str:
-    for folder in _candidate_output_folders(
+    candidate_folders = _candidate_output_folders(
         sequence,
         subdir,
         output_tag,
@@ -234,7 +227,8 @@ def _resolve_output_folder(
         frame_end,
         interval,
         frame_id=frame_id,
-    ):
+    )
+    for folder in candidate_folders:
         if frame_id is not None:
             if _folder_has_frame_data(folder, benchmark_csv_name, frame_id):
                 return folder
@@ -244,15 +238,7 @@ def _resolve_output_folder(
             if os.path.isfile(benchmark_path) or os.path.isfile(eval_json_path):
                 return folder
 
-    return _candidate_output_folders(
-        sequence,
-        subdir,
-        output_tag,
-        frame_start,
-        frame_end,
-        interval,
-        frame_id=frame_id,
-    )[0]
+    return candidate_folders[0]
 
 
 def _load_sequence_results(
@@ -260,10 +246,10 @@ def _load_sequence_results(
     sequence: str,
     baseline: str,
     baseline_family: str,
-    videogs_qp: Optional[int],
+    videogs_qp: int | None,
     benchmark_csv_name: str,
     frame_ids: list[int],
-    gop_anchor_frame: Optional[int] = None,
+    gop_anchor_frame: int | None = None,
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
 
@@ -277,8 +263,6 @@ def _load_sequence_results(
                     benchmark_by_frame[fid] = {
                         "compressed_size_bytes": int(row["compressed_size_bytes"]),
                         "uncompressed_size_bytes": int(row.get("uncompressed_size_bytes", 0)),
-                        "encode_ms": _first_float(row, ("total_encode_ms", "encode_time_ms", "encode_ms")),
-                        "decode_ms": _first_float(row, ("total_decode_ms", "decode_time_ms", "decode_ms")),
                     }
         except (OSError, KeyError, ValueError) as exc:
             print(f"  [WARN] Failed to read {benchmark_path}: {exc}")
@@ -309,8 +293,8 @@ def _load_sequence_results(
     unavailable_frame_ids = sorted(set(selected_frame_ids) - set(available_frame_ids))
     if unavailable_frame_ids:
         print(
-            f"  [INFO] {baseline} | {sequence}: unavailable requested frames "
-            f"{unavailable_frame_ids}; available frames {available_frame_ids}"
+            f"  [INFO] {baseline} | {sequence}: unavailable requested frames {unavailable_frame_ids}; "
+            f"available frames {available_frame_ids}"
         )
     if (
         selected_frame_ids
@@ -318,8 +302,8 @@ def _load_sequence_results(
         and not any(fid in available_frame_ids for fid in selected_frame_ids)
     ):
         print(
-            f"  [INFO] {baseline} | {sequence}: requested frames {selected_frame_ids} "
-            f"not present in both benchmark/eval; using available frames {available_frame_ids}"
+            f"  [INFO] {baseline} | {sequence}: requested frames {selected_frame_ids} not present in "
+            f"both benchmark/eval; using available frames {available_frame_ids}"
         )
         selected_frame_ids = available_frame_ids
 
@@ -347,14 +331,10 @@ def _load_sequence_results(
                 "compressed_mb": comp / (1024 * 1024),
                 "uncompressed_size_bytes": uncomp,
                 "uncompressed_mb": uncomp / (1024 * 1024),
-                "encode_ms": b.get("encode_ms"),
-                "decode_ms": b.get("decode_ms"),
                 "gt_psnr": m["gt_psnr"],
                 "gt_ssim": m["gt_ssim"],
                 "decomp_psnr": m["decomp_psnr"],
                 "decomp_ssim": m["decomp_ssim"],
-                "psnr_drop": m["gt_psnr"] - m["decomp_psnr"],
-                "ssim_drop": m["gt_ssim"] - m["decomp_ssim"],
             }
         )
 
@@ -418,7 +398,7 @@ def collect_all_results() -> list[dict[str, Any]]:
                 if not output_tag:
                     continue
 
-                videogs_qp: Optional[int] = None
+                videogs_qp: int | None = None
                 baseline_label = baseline_family
                 if baseline_family == "VideoGS" and str(output_tag).startswith("qp_"):
                     qp_suffix = str(output_tag).split("_", maxsplit=1)[1]
@@ -627,7 +607,7 @@ def plot_quality_by_sequence(
     ylabel: str,
     title: str,
     filename: str,
-    ylim: Optional[tuple[float, float]] = None,
+    ylim: tuple[float, float] | None = None,
 ) -> None:
     sequences = list(dict.fromkeys(r["sequence_name"] for r in rows))
     baseline_labels = _get_ordered_baselines(rows)
