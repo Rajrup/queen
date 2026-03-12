@@ -29,6 +29,9 @@ DATA_PATH = "/synology/rajrup/Queen"
 VIDEOGS_QPS = [25]
 VIDEOGS_GROUP_SIZE = 20
 
+DRACOGS_DEFAULT_CONFIG_TAG = "eg_16_eo_16_et_16_es_16_cl_10"
+MESONGS_DEFAULT_CONFIG_TAG = "d17_nb8_nblk57_cb2048"
+
 EXPERIMENTS: dict[str, list[int]] = {
     "cook_spinach": list(range(1, 201, 20)),
     "coffee_martini": list(range(1, 201, 20)),
@@ -41,12 +44,12 @@ EXPERIMENTS: dict[str, list[int]] = {
 BASELINES: dict[str, dict[str, Any]] = {
     "DracoGS": {
         "subdir": "dracogs",
-        "output_tag": "eg_16_eo_16_et_16_es_16_cl_10",
+        "output_tag": DRACOGS_DEFAULT_CONFIG_TAG,
         "benchmark_csv": "benchmark_dracogs.csv",
     },
     "MesonGS": {
         "subdir": "mesongs",
-        "output_tag": "params_default",
+        "output_tag": MESONGS_DEFAULT_CONFIG_TAG,
         "benchmark_csv": "benchmark_mesongs.csv",
     },
     "VideoGS": {
@@ -394,25 +397,26 @@ def collect_all_results() -> list[dict[str, Any]]:
         frame_start, frame_end, interval = _selected_to_span(frame_ids)
         for baseline_family, cfg in BASELINES.items():
             output_tags = cfg.get("output_tags", [cfg.get("output_tag")])
-            for output_tag in output_tags:
-                if not output_tag:
-                    continue
 
-                videogs_qp: int | None = None
-                baseline_label = baseline_family
-                if baseline_family == "VideoGS" and str(output_tag).startswith("qp_"):
-                    qp_suffix = str(output_tag).split("_", maxsplit=1)[1]
-                    try:
-                        videogs_qp = int(qp_suffix)
-                    except ValueError:
-                        videogs_qp = None
-                    baseline_label = (
-                        f"VideoGS (QP={videogs_qp})"
-                        if videogs_qp is not None
-                        else f"VideoGS ({output_tag})"
-                    )
+            if baseline_family == "VideoGS":
+                for output_tag in output_tags:
+                    if not output_tag:
+                        continue
 
-                if baseline_family == "VideoGS":
+                    videogs_qp: int | None = None
+                    baseline_label = baseline_family
+                    if str(output_tag).startswith("qp_"):
+                        qp_suffix = str(output_tag).split("_", maxsplit=1)[1]
+                        try:
+                            videogs_qp = int(qp_suffix)
+                        except ValueError:
+                            videogs_qp = None
+                        baseline_label = (
+                            f"VideoGS (QP={videogs_qp})"
+                            if videogs_qp is not None
+                            else f"VideoGS ({output_tag})"
+                        )
+
                     for anchor in frame_ids:
                         gop_frame_ids = _videogs_gop_frame_ids(sequence, int(anchor))
                         output_folder = _resolve_output_folder(
@@ -436,29 +440,34 @@ def collect_all_results() -> list[dict[str, Any]]:
                                 gop_anchor_frame=int(anchor),
                             )
                         )
-                else:
-                    for fid in frame_ids:
-                        output_folder = _resolve_output_folder(
-                            sequence,
-                            cfg["subdir"],
-                            str(output_tag),
-                            frame_start,
-                            frame_end,
-                            interval,
-                            cfg["benchmark_csv"],
-                            frame_id=int(fid),
-                        )
-                        rows.extend(
-                            _load_sequence_results(
-                                output_folder,
-                                sequence,
-                                baseline_label,
-                                baseline_family,
-                                videogs_qp,
-                                cfg["benchmark_csv"],
-                                [int(fid)],
-                            )
-                        )
+                continue
+
+            default_tag = cfg.get("output_tag")
+            if not default_tag:
+                continue
+
+            for fid in frame_ids:
+                output_folder = _resolve_output_folder(
+                    sequence,
+                    cfg["subdir"],
+                    str(default_tag),
+                    frame_start,
+                    frame_end,
+                    interval,
+                    cfg["benchmark_csv"],
+                    frame_id=int(fid),
+                )
+                rows.extend(
+                    _load_sequence_results(
+                        output_folder,
+                        sequence,
+                        baseline_family,
+                        baseline_family,
+                        None,
+                        cfg["benchmark_csv"],
+                        [int(fid)],
+                    )
+                )
     return rows
 
 
