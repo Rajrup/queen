@@ -26,7 +26,7 @@ import pynvml
 # Constants
 # ---------------------------------------------------------------------------
 DATASET_NAME = "Neural_3D_Video"
-SH_DEGREE = 2
+SH_DEGREE = 0
 SAMPLING_INTERVAL_SEC = 0.030  # 30 ms
 
 SEQUENCES = [
@@ -44,6 +44,38 @@ SCRIPT_PATH = Path(__file__).resolve()
 SCRIPTS_DIR = SCRIPT_PATH.parent
 QUEEN_ROOT = SCRIPTS_DIR.parent
 MESONGS_ROOT = QUEEN_ROOT / "MesonGS"
+
+
+# ---------------------------------------------------------------------------
+# Per-sequence LiVoGS parameter overrides
+# ---------------------------------------------------------------------------
+LIVOGS_SEQ_PARAMS: dict[str, dict] = {
+    "flame_salmon_1": {
+        "J":                       15,
+        "quantize_step_scales":    0.01,
+        "quantize_step_quats":     0.04,
+        "quantize_step_opacity":   0.01,
+        "quantize_step_sh_dc":     0.03,
+        "quantize_step_sh_rest":   0.39,
+        "rlgr_block_size":         512,
+    },
+    "sear_steak": {
+        "J":                       12,
+        "quantize_step_scales":    0.01,
+        "quantize_step_quats":     0.04,
+        "quantize_step_opacity":   0.04,
+        "quantize_step_sh_dc":     0.01,
+        "quantize_step_sh_rest":   0.06,
+        "rlgr_block_size":         512,
+    },
+}
+
+# Default LiVoGS parameters used for all sequences not in LIVOGS_SEQ_PARAMS
+LIVOGS_DEFAULTS = {
+    "J":               16,
+    "quantize_step":   0.0001,   # uniform step applied to all attributes
+    "rlgr_block_size": 4096,
+}
 
 
 # ---------------------------------------------------------------------------
@@ -71,19 +103,35 @@ class PipelineConfig:
 
 def _livogs_args(ply_path: str, output_folder: str, seq: str,
                  frame_start: int, frame_end: int, interval: int) -> list[str]:
-    return [
+    p = LIVOGS_SEQ_PARAMS.get(seq, {})
+    J       = p.get("J",               LIVOGS_DEFAULTS["J"])
+    rlgr_bs = p.get("rlgr_block_size", LIVOGS_DEFAULTS["rlgr_block_size"])
+
+    base = [
         "--ply_path", ply_path,
         "--output_folder", output_folder,
         "--frame_start", str(frame_start),
         "--frame_end", str(frame_end),
         "--interval", str(interval),
         "--sh_degree", str(SH_DEGREE),
-        "--J", "17",
-        "--quantize_step", "0.0001",
+        "--J", str(J),
         "--sh_color_space", "klt",
-        "--rlgr_block_size", "4096",
-        "--nvcomp_algorithm", "ANS",
+        "--rlgr_block_size", str(rlgr_bs),
+        "--nvcomp_algorithm", "None",
     ]
+
+    if seq in LIVOGS_SEQ_PARAMS:
+        base += [
+            "--quantize_step_scales",   str(p["quantize_step_scales"]),
+            "--quantize_step_quats",    str(p["quantize_step_quats"]),
+            "--quantize_step_opacity",  str(p["quantize_step_opacity"]),
+            "--quantize_step_sh_dc",    str(p["quantize_step_sh_dc"]),
+            "--quantize_step_sh_rest",  str(p["quantize_step_sh_rest"]),
+        ]
+    else:
+        base += ["--quantize_step", str(LIVOGS_DEFAULTS["quantize_step"])]
+
+    return base
 
 
 def _videogs_args(ply_path: str, output_folder: str, seq: str,
@@ -132,7 +180,7 @@ def _mesongs_args(ply_path: str, output_folder: str, seq: str,
     ]
 
 
-DATA_PATH_GLOBAL = "/synology/rajrup/Queen"
+DATA_PATH_GLOBAL = "/home/rajrup/Queen"
 
 
 def build_pipeline_configs() -> dict[str, PipelineConfig]:
@@ -140,7 +188,7 @@ def build_pipeline_configs() -> dict[str, PipelineConfig]:
         "livogs": PipelineConfig(
             "livogs", "queen",
             QUEEN_ROOT / "scripts" / "livogs_baseline" / "compress_decompress_pipeline.py",
-            QUEEN_ROOT, 1, _livogs_args,
+            QUEEN_ROOT, 10, _livogs_args,
         ),
         "videogs": PipelineConfig(
             "videogs", "queen",
@@ -166,6 +214,8 @@ def build_pipeline_configs() -> dict[str, PipelineConfig]:
 class ResourceMonitor:
     """Background thread that samples CPU/RAM/GPU metrics at a fixed interval."""
 
+    _JETSON_GPU_LOAD_PATH = Path("/sys/devices/platform/gpu.0/load")
+
     def __init__(self, gpu_index: int = 0, interval: float = SAMPLING_INTERVAL_SEC):
         self._interval = interval
         self._gpu_index = gpu_index
@@ -178,6 +228,28 @@ class ResourceMonitor:
         pynvml.nvmlInit()
         self._gpu_handle = pynvml.nvmlDeviceGetHandleByIndex(gpu_index)
 
+        self._is_tegra = self._detect_tegra()
+        if self._is_tegra:
+            print("  [ResourceMonitor] Tegra/Jetson detected — using sysfs fallbacks for GPU metrics")
+
+    @classmethod
+    def _detect_tegra(cls) -> bool:
+        """Return True when running on an NVIDIA Jetson (Tegra) platform."""
+        if cls._JETSON_GPU_LOAD_PATH.exists():
+            return True
+        try:
+            return Path("/etc/nv_tegra_release").exists()
+        except OSError:
+            return False
+
+    def _jetson_gpu_util_pct(self) -> float:
+        """Read GPU utilisation from sysfs (0-1000 scale -> 0-100%)."""
+        try:
+            raw = self._JETSON_GPU_LOAD_PATH.read_text().strip()
+            return round(int(raw) / 10.0, 1)
+        except (OSError, ValueError):
+            return 0.0
+
     def _collect_sample(self) -> dict[str, Any]:
         elapsed = time.perf_counter() - self._t0
 
@@ -186,20 +258,35 @@ class ResourceMonitor:
         cpu_cores_active = sum(1 for c in cpu_per_core if c > 5.0)
         ram_used_mb = psutil.virtual_memory().used / (1024 * 1024)
 
-        gpu_util = pynvml.nvmlDeviceGetUtilizationRates(self._gpu_handle)
-        gpu_mem = pynvml.nvmlDeviceGetMemoryInfo(self._gpu_handle)
-        gpu_enc = pynvml.nvmlDeviceGetEncoderUtilization(self._gpu_handle)
-        gpu_dec = pynvml.nvmlDeviceGetDecoderUtilization(self._gpu_handle)
+        if self._is_tegra:
+            gpu_util_pct = self._jetson_gpu_util_pct()
+            gpu_mem_used_mb = 0
+            gpu_enc_util_pct = 0
+            gpu_dec_util_pct = 0
+            try:
+                gpu_mem = pynvml.nvmlDeviceGetMemoryInfo(self._gpu_handle)
+                gpu_mem_used_mb = gpu_mem.used // (1024 * 1024)
+            except pynvml.NVMLError:
+                pass
+        else:
+            gpu_util = pynvml.nvmlDeviceGetUtilizationRates(self._gpu_handle)
+            gpu_mem = pynvml.nvmlDeviceGetMemoryInfo(self._gpu_handle)
+            gpu_enc = pynvml.nvmlDeviceGetEncoderUtilization(self._gpu_handle)
+            gpu_dec = pynvml.nvmlDeviceGetDecoderUtilization(self._gpu_handle)
+            gpu_util_pct = gpu_util.gpu
+            gpu_mem_used_mb = gpu_mem.used // (1024 * 1024)
+            gpu_enc_util_pct = gpu_enc[0]
+            gpu_dec_util_pct = gpu_dec[0]
 
         sample: dict[str, Any] = {
             "elapsed_sec": round(elapsed, 4),
             "cpu_pct": cpu_overall,
             "cpu_cores_active": cpu_cores_active,
             "ram_used_mb": round(ram_used_mb, 1),
-            "gpu_util_pct": gpu_util.gpu,
-            "gpu_mem_used_mb": gpu_mem.used // (1024 * 1024),
-            "gpu_enc_util_pct": gpu_enc[0],
-            "gpu_dec_util_pct": gpu_dec[0],
+            "gpu_util_pct": gpu_util_pct,
+            "gpu_mem_used_mb": gpu_mem_used_mb,
+            "gpu_enc_util_pct": gpu_enc_util_pct,
+            "gpu_dec_util_pct": gpu_dec_util_pct,
         }
         for i, val in enumerate(cpu_per_core):
             sample[f"cpu_core_{i}_pct"] = val
@@ -300,7 +387,7 @@ def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description="Latency & resource benchmark for 4 compression pipelines (QUEEN / Neural_3D_Video)"
     )
-    p.add_argument("--data_path", type=str, default="/synology/rajrup/Queen")
+    p.add_argument("--data_path", type=str, default="/home/rajrup/Queen")
     p.add_argument("--pipelines", nargs="+", choices=PIPELINES, default=PIPELINES)
     p.add_argument("--sequences", nargs="+", default=SEQUENCES)
     p.add_argument("--frame_start", type=int, default=None,
@@ -363,6 +450,10 @@ def main() -> None:
             output_dir = str(
                 Path(gt_model_path) / "latency_benchmark" / pipeline_name
             )
+            if pipeline_name == "livogs":
+                output_dir = str(
+                    Path(gt_model_path) / "latency_benchmark" / f"{pipeline_name}_sh_degree_{SH_DEGREE}"
+                )
 
             if args.skip_existing and Path(output_dir, "summary.json").is_file():
                 print(f"  SKIP (exists): {pipeline_name} | {seq}")
@@ -428,8 +519,25 @@ def main() -> None:
 
             # Build and save summary JSON
             run_summary = summarize_samples(run_samples)
+            _lp = LIVOGS_SEQ_PARAMS.get(seq, {})
+            livogs_cfg: dict = {
+                "J":              _lp.get("J",               LIVOGS_DEFAULTS["J"]),
+                "rlgr_block_size": _lp.get("rlgr_block_size", LIVOGS_DEFAULTS["rlgr_block_size"]),
+                "sh_color_space": "klt",
+                "nvcomp":         "None",
+            }
+            if seq in LIVOGS_SEQ_PARAMS:
+                livogs_cfg.update({
+                    "quantize_step_scales":  _lp["quantize_step_scales"],
+                    "quantize_step_quats":   _lp["quantize_step_quats"],
+                    "quantize_step_opacity": _lp["quantize_step_opacity"],
+                    "quantize_step_sh_dc":   _lp["quantize_step_sh_dc"],
+                    "quantize_step_sh_rest": _lp["quantize_step_sh_rest"],
+                })
+            else:
+                livogs_cfg["quantize_step"] = LIVOGS_DEFAULTS["quantize_step"]
             pipeline_config_info = {
-                "livogs": {"J": 17, "qstep": 0.0001, "sh_color_space": "klt", "nvcomp": "ANS"},
+                "livogs": livogs_cfg,
                 "videogs": {"qp": 25, "group_size": 20},
                 "dracogs": {"eg": 16, "eo": 16, "et": 16, "es": 16, "cl": 10},
                 "mesongs": {},
@@ -489,4 +597,7 @@ if __name__ == "__main__":
 conda activate queen
 python scripts/run_latency_benchmark.py --gpu_id 0
 python scripts/run_latency_benchmark.py --gpu_id 0 --dry-run
+
+# Benchmark LiVoGS for all sequences, change SH_DEGREE to 0, 1, 2 in the file
+python scripts/run_latency_benchmark.py --pipelines livogs --sequences flame_salmon_1 sear_steak
 '''

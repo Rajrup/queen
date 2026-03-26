@@ -14,7 +14,7 @@ setup(
     author="Sharath Girish, Tianye Li, Amrita Mazumdar, et al.",
     url="https://github.com/NVlabs/queen",
     packages=find_packages(),
-    python_requires=">=3.11",
+    python_requires=">=3.10",
     install_requires=[
         "torch",
         "torchvision",
@@ -37,6 +37,6 @@ setup(
         "Intended Audience :: Science/Research",
         "Topic :: Scientific/Engineering :: Artificial Intelligence",
         "License :: Other/Proprietary License",
-        "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.10",
     ],
 )

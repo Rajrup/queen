@@ -1,31 +1,53 @@
 ## Setup
 
-- Ubuntu 24.04
-- GCC 12.4.0
-- CUDA 12.1
-- CuDNN 9.17.1
+System details:
+```
+Jetpack 6.2.1
+CUDA 12.6
+Ubuntu 22.04
+CMake version 3.22.1
+GCC version 11.4.0
+Python version 3.10
+PyTorch version 2.5.0
+Torchvision version 0.20.1
+```
 
 ## Install Dependencies
 
 ```bash
 git clone --recurse-submodules https://github.com/Rajrup/queen.git Queen
 cd Queen
-# set up some relevant directories
-mkdir -p data
-mkdir -p logs
-mkdir -p output
 ```
 
 ### Conda Environment
 
 ```bash
-conda create -n queen python=3.11 -y
+conda create -n queen python=3.10 -y
 conda activate queen
 
 # Install the package and its dependencies
 sudo apt-get install libglm-dev libgl1 -y
 pip install six
-pip install -e .
+pip install numpy==1.26.4
+pip install opencv-python==4.11.0.86
+pip install Cython
+
+# Install PyTorch and torchvision
+pip install https://developer.download.nvidia.com/compute/redist/jp/v61/pytorch/torch-2.5.0a0+872d972e41.nv24.08.17622132-cp310-cp310-linux_aarch64.whl
+# Install torchvision from source: https://forums.developer.nvidia.com/t/pytorch-for-jetson/72048
+sudo apt install libjpeg-dev zlib1g-dev libpython3-dev libopenblas-dev libavcodec-dev libavformat-dev libswscale-dev
+pip install pillow
+git clone --branch <version> https://github.com/pytorch/vision torchvision
+cd torchvision
+git checkout tags/v0.20.1
+export BUILD_VERSION=0.20.1
+python setup.py install
+
+sudo apt-get install python3-dev libxml2-dev libxslt1-dev zlib1g-dev libjsoncpp-dev
+
+# Install the package (use --no-deps so pip does not reinstall PyTorch/torchvision from PyPI)
+pip install plyfile tqdm pillow scipy wandb torchmetrics imutils matplotlib torchac timm==0.6.13 einops==0.6.0
+pip install -e . --no-deps
 pip install torchmetrics[image]
 pip install tensorboard
 
@@ -45,61 +67,6 @@ python scripts/patch_timm.py
 
 Follow the instructions in `README_LiVoGS.md` to set up LiVoGS.
 
-### Download weights for MiDaS
-
-```bash
-wget -P MiDaS/weights https://github.com/isl-org/MiDaS/releases/download/v3_1/dpt_beit_large_512.pt
-```
-
-## Data Preparation
-
-### Neural 3D Video (or DyNeRF)
-
-- Use 4DGaussians to preprocess the Neural 3D Video dataset.
-- Follow instructions in `scripts/preprocess_dynerf.sh` to preprocess the Neural 3D Video dataset or follow: [here](https://github.com/hustvl/4DGaussians?tab=readme-ov-file#training)
-- Preprocessed data: `/synology/rajrup/Queen/Neural_3D_Video`
-
-```bash
-conda activate Gaussians4D
-cd /home/rajrup/project/4DGaussians/
-./scripts/preprocess_dynerf.sh # Change sequence name before running.
-```
-
-### Google Immersive
-
-## Training
-
-### Training DyNeRF (Neural 3D Video)
-
-```bash
-python train.py --config configs/dynerf.yaml --log_images --log_ply -s /synology/rajrup/Queen/Neural_3D_Video/cook_spinach -m /synology/rajrup/Queen/train_output/Neural_3D_Video/cook_spinach
-
-# Saving compressed model
-python train.py --config configs/dynerf.yaml --log_images --log_compressed --log_ply -s /synology/rajrup/Queen/Neural_3D_Video/cook_spinach -m /synology/rajrup/Queen/train_output/Neural_3D_Video/cook_spinach
-```
-
-### Evaluation
-
-```bash
-python metrics_video.py -m /synology/rajrup/Queen/train_output/Neural_3D_Video/cook_spinach
-
-# Render static camera viewpoints and spiral if trained w/o --log_compressed
-python render.py -s /synology/rajrup/Queen/Neural_3D_Video/cook_spinach -m /synology/rajrup/Queen/train_output/Neural_3D_Video/cook_spinach
-python render_fvv.py --config configs/dynerf.yaml  -s /synology/rajrup/Queen/Neural_3D_Video/cook_spinach -m /synology/rajrup/Queen/train_output/Neural_3D_Video/cook_spinach
-
-# Render static camera viewpoints and spiral if trained w/ --log_compressed
-python render_fvv_compressed.py --config configs/dynerf.yaml  -s /synology/rajrup/Queen/Neural_3D_Video/cook_spinach -m /synology/rajrup/Queen/train_output/Neural_3D_Video/cook_spinach_compressed --render_compare
-```
-
-## Compression
-
-### VideoGS 2D Codec
-
-```bash
-bash scripts/videogs_baseline/evaluate_videogs_compression.sh
-
-# Generate plots
-bash scripts/videogs_baseline/plots/plot_benchmark.sh
 ```
 
 ### LiVoGS 3D Codec

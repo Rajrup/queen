@@ -28,9 +28,9 @@
 # Dataset: cook_spinach from Neural_3D_Video (DyNeRF)
 DATASET_NAME="Neural_3D_Video"
 # SEQUENCE_NAME="coffee_martini"    # Failed at Frame: 52
-# SEQUENCE_NAME="cook_spinach"      # Done
+SEQUENCE_NAME="cook_spinach"      # Done
 # SEQUENCE_NAME="cut_roasted_beef"  # Done
-SEQUENCE_NAME="flame_salmon_1"    # Done
+# SEQUENCE_NAME="flame_salmon_1"    # Done
 # SEQUENCE_NAME="flame_steak"       # Done
 # SEQUENCE_NAME="sear_steak"        # Done
 
@@ -40,11 +40,11 @@ END_FRAME=20
 INTERVAL=1
 SH_DEGREE=2
 
-J=17                    # Octree depth for voxelization
+J=16                   # Octree depth for voxelization
 QUANTIZE_STEP=0.0001    # Uniform quantization step
 SH_COLOR_SPACE="klt"    # Color space: rgb, yuv, klt
 RLGR_BLOCK_SIZE=4096    # RLGR parallel block size
-NVCOMP_ALGORITHM="ANS"  # nvCOMP algorithm for position compression (None to disable)
+NVCOMP_ALGORITHM="None"  # nvCOMP algorithm for position compression (None to disable) -> Jetson doesn't support nvcomp
 USE_OPTIMIZED=0         # 0 = original, 1 = optimized decoder
 
 # --- Parse named arguments ---
@@ -64,7 +64,7 @@ while [[ $# -gt 0 ]]; do
         *) echo "Unknown argument: $1"; exit 1 ;;
     esac
 done
-data_path="/synology/rajrup/Queen"
+data_path="/home/rajrup/Queen"
 dataset_path="${data_path}/${DATASET_NAME}/${SEQUENCE_NAME}"
 gt_model_path="${data_path}/pretrained_output/${DATASET_NAME}/queen_compressed_${SEQUENCE_NAME}"
 output_folder="${gt_model_path}/compression/livogs/J_${J}_qstep_${QUANTIZE_STEP}_${SH_COLOR_SPACE}_sh${SH_DEGREE}_nvcomp_${NVCOMP_ALGORITHM}"
@@ -110,21 +110,21 @@ python ${PIPELINE_SCRIPT} \
     --rlgr_block_size ${RLGR_BLOCK_SIZE} \
     --nvcomp_algorithm ${NVCOMP_ALGORITHM}
 
-### 2. Evaluate Decompression Quality (PSNR/SSIM vs GT)
-echo ""
-echo "======================================================================"
-echo "Step 2: Evaluate Decompression Quality"
-echo "======================================================================"
-python scripts/evaluate_decompress.py \
-    --config configs/dynerf.yaml \
-    -s "${dataset_path}" \
-    -m "${gt_model_path}" \
-    --decompressed_ply_path "${output_folder}/decompressed_ply" \
-    --output_render_path "${output_folder}/evaluation" \
-    --save_renders \
-    --frame_start ${START_FRAME} --frame_end ${END_FRAME} --interval ${INTERVAL}
+# ### 2. Evaluate Decompression Quality (PSNR/SSIM vs GT)
+# echo ""
+# echo "======================================================================"
+# echo "Step 2: Evaluate Decompression Quality"
+# echo "======================================================================"
+# python scripts/evaluate_decompress.py \
+#     --config configs/dynerf.yaml \
+#     -s "${dataset_path}" \
+#     -m "${gt_model_path}" \
+#     --decompressed_ply_path "${output_folder}/decompressed_ply" \
+#     --output_render_path "${output_folder}/evaluation" \
+#     --save_renders \
+#     --frame_start ${START_FRAME} --frame_end ${END_FRAME} --interval ${INTERVAL}
 
-echo ""
-echo "======================================================================"
-echo "Done! Results in: ${output_folder}"
-echo "======================================================================"
+# echo ""
+# echo "======================================================================"
+# echo "Done! Results in: ${output_folder}"
+# echo "======================================================================"
