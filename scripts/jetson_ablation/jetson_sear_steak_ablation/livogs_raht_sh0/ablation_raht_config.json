@@ -1,0 +1,21 @@
+{
+  "ply_path": "/home/rajrup/Queen/pretrained_output/Neural_3D_Video/queen_compressed_sear_steak",
+  "frame_start": 1,
+  "frame_end": 300,
+  "interval": 10,
+  "sh_degree": 0,
+  "J": 12,
+  "sh_color_space": "klt",
+  "variants": [
+    "pytorch",
+    "cuda"
+  ],
+  "pipeline_params": {
+    "qp_scales": 0.01,
+    "qp_quats": 0.04,
+    "qp_opacity": 0.04,
+    "qp_sh_dc": 0.01,
+    "qp_sh_ac": 0.06,
+    "rlgr_block_size": 512
+  }
+}

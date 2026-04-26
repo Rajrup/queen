@@ -1,0 +1,21 @@
+{
+  "ply_path": "/home/rajrup/VideoGS/train_output/HiFi4G_Dataset/4K_Actor1_Greeting/checkpoint",
+  "frame_start": 0,
+  "frame_end": 200,
+  "interval": 10,
+  "sh_degree": 3,
+  "J": 12,
+  "sh_color_space": "klt",
+  "variants": [
+    "pytorch",
+    "cuda"
+  ],
+  "pipeline_params": {
+    "qp_scales": 0.0001,
+    "qp_quats": 0.01,
+    "qp_opacity": 0.1,
+    "qp_sh_dc": 0.02,
+    "qp_sh_ac": 0.06,
+    "rlgr_block_size": 512
+  }
+}
